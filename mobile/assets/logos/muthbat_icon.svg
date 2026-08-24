@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" fill="none">
+  <defs>
+    <linearGradient id="petrolGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#184E5D"/>
+      <stop offset="100%" stop-color="#123B46"/>
+    </linearGradient>
+    <linearGradient id="tealGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1FB2A0"/>
+      <stop offset="100%" stop-color="#138577"/>
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F3C363"/>
+      <stop offset="100%" stop-color="#D9A441"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Left / Merchant Document Shield (Petrol Navy) -->
+  <path d="M28 22 C28 17.58 31.58 14 36 14 L62 14 C66.42 14 70 17.58 70 22 L70 78 C70 82.42 66.42 86 62 86 L36 86 C31.58 86 28 82.42 28 78 Z"
+        fill="url(#petrolGrad)"/>
+
+  <!-- Right / Customer Interlocking Record (Teal) -->
+  <path d="M50 34 C50 29.58 53.58 26 58 26 L84 26 C88.42 26 92 29.58 92 34 L92 98 C92 102.42 88.42 106 84 106 L58 106 C53.58 106 50 102.42 50 98 Z"
+        fill="url(#tealGrad)" fill-opacity="0.94"/>
+
+  <!-- Interlocking Connection Arc -->
+  <path d="M50 44 L70 44 L70 68 L50 68 Z" fill="#0E6E62" fill-opacity="0.4"/>
+
+  <!-- Document Security Line Accents -->
+  <rect x="36" y="28" width="18" height="3.5" rx="1.75" fill="#FFFFFF" fill-opacity="0.35"/>
+  <rect x="36" y="38" width="12" height="3.5" rx="1.75" fill="#FFFFFF" fill-opacity="0.35"/>
+  <rect x="66" y="82" width="18" height="3.5" rx="1.75" fill="#FFFFFF" fill-opacity="0.45"/>
+  <rect x="66" y="92" width="12" height="3.5" rx="1.75" fill="#FFFFFF" fill-opacity="0.45"/>
+
+  <!-- Golden Verification Checkmark (The Core Anchor) -->
+  <circle cx="60" cy="56" r="22" fill="#FFFFFF"/>
+  <circle cx="60" cy="56" r="19" fill="url(#petrolGrad)"/>
+  
+  <path d="M50 56.5 L56.5 63 L70.5 49"
+        stroke="url(#goldGrad)"
+        stroke-width="4.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+dashboard/node_modules/
+
+# Build output
+dist/
+dashboard/dist/
+coverage/
+
+# Environment and Data files
+.env*
+!.env.example
+!.env.production.example
+data/
+media/
+uploads/
+.wwebjs_auth/
+.wwebjs_cache/
+*.sqlite
+*.sqlite3
+*.db
+
+# Git and CI
+.git/
+.github/
+.gitignore
+
+# Documentation & SDKs (not needed in backend container)
+docs/
+sdk/
+*.md
+!README.md
+
+# IDE & OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs & Temporary files
+logs/
+*.log
+npm-debug.log*
+tmp/
+temp/
+.docker/
+

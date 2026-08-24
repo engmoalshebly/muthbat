@@ -1,0 +1,54 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.jks
+*.keystore
+key.properties
+google-services.json
+
+# Dependencies and generated builds
+node_modules/
+**/node_modules/
+mobile/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/coverage/
+**/dist/
+**/.venv/
+**/venv/
+debt-ledger-supabase/tmp/
+
+# Local reference material is not part of the product source and may contain
+# private documents or customer exports.
+debt-ledger-supabase/logos/
+
+# Local databases and temporary runtime data
+.tmp-pgdata/
+.tmp-pgtest/
+**/.temp/
+**/.branches/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+
+# IDE and operating system files
+.idea/
+.vscode/
+.local-backups/
+*.iml
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and generated packages
+*.log
+*.apk
+*.aab
+OpenWA/qrcode.png
+OpenWA/.wwebjs_auth/
+OpenWA/.wwebjs_cache/

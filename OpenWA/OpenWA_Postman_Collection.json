@@ -1,0 +1,344 @@
+{
+	"info": {
+		"_postman_id": "openwa-api-collection-v1",
+		"name": "OpenWA WhatsApp Gateway API",
+		"description": "مجموعة طلبات Postman الرسمية والكاملة لمنظومة OpenWA WhatsApp Gateway API",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:2785/api",
+			"type": "string"
+		},
+		{
+			"key": "apiKey",
+			"value": "dev-admin-key",
+			"type": "string"
+		},
+		{
+			"key": "sessionId",
+			"value": "2904a7ee-3af1-4963-8dcb-4bfc1f5cd6e9",
+			"type": "string"
+		},
+		{
+			"key": "testPhone",
+			"value": "967775451608@c.us",
+			"type": "string"
+		}
+	],
+	"auth": {
+		"type": "apikey",
+		"apikey": [
+			{
+				"key": "key",
+				"value": "X-API-Key",
+				"type": "string"
+			},
+			{
+				"key": "value",
+				"value": "{{apiKey}}",
+				"type": "string"
+			},
+			{
+				"key": "in",
+				"value": "header",
+				"type": "string"
+			}
+		]
+	},
+	"item": [
+		{
+			"name": "1. Authentication (المصادقة)",
+			"item": [
+				{
+					"name": "Validate API Key",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/auth/validate",
+							"host": ["{{baseUrl}}"],
+							"path": ["auth", "validate"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "2. Sessions Management (إدارة الجلسات)",
+			"item": [
+				{
+					"name": "List All Sessions",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/sessions",
+							"host": ["{{baseUrl}}"],
+							"path": ["sessions"]
+						}
+					}
+				},
+				{
+					"name": "Get Session Details",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/sessions/{{sessionId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["sessions", "{{sessionId}}"]
+						}
+					}
+				},
+				{
+					"name": "Start Session",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/sessions/{{sessionId}}/start",
+							"host": ["{{baseUrl}}"],
+							"path": ["sessions", "{{sessionId}}", "start"]
+						}
+					}
+				},
+				{
+					"name": "Get QR Code",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/sessions/{{sessionId}}/qr",
+							"host": ["{{baseUrl}}"],
+							"path": ["sessions", "{{sessionId}}", "qr"]
+						}
+					}
+				},
+				{
+					"name": "Stop Session",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/sessions/{{sessionId}}/stop",
+							"host": ["{{baseUrl}}"],
+							"path": ["sessions", "{{sessionId}}", "stop"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "3. Send Messages (إرسال الرسائل)",
+			"item": [
+				{
+					"name": "Send Text Message",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"chatId\": \"{{testPhone}}\",\n  \"text\": \"👋 مرحباً! هذه رسالة تجريبية من Postman 🚀\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/sessions/{{sessionId}}/messages/send-text",
+							"host": ["{{baseUrl}}"],
+							"path": ["sessions", "{{sessionId}}", "messages", "send-text"]
+						}
+					}
+				},
+				{
+					"name": "Send Image Message",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"chatId\": \"{{testPhone}}\",\n  \"data\": \"https://images.unsplash.com/photo-1579202673506-ca3ce28943ef\",\n  \"mimetype\": \"image/jpeg\",\n  \"filename\": \"photo.jpg\",\n  \"caption\": \"تجربة إرسال صورة 📷\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/sessions/{{sessionId}}/messages/send-image",
+							"host": ["{{baseUrl}}"],
+							"path": ["sessions", "{{sessionId}}", "messages", "send-image"]
+						}
+					}
+				},
+				{
+					"name": "Send Document / PDF",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"chatId\": \"{{testPhone}}\",\n  \"data\": \"https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf\",\n  \"mimetype\": \"application/pdf\",\n  \"filename\": \"تقرير_الحساب.pdf\",\n  \"caption\": \"مرفق كشف الحساب 📑\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/sessions/{{sessionId}}/messages/send-document",
+							"host": ["{{baseUrl}}"],
+							"path": ["sessions", "{{sessionId}}", "messages", "send-document"]
+						}
+					}
+				},
+				{
+					"name": "Send Location",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"chatId\": \"{{testPhone}}\",\n  \"latitude\": 15.369445,\n  \"longitude\": 44.191006,\n  \"description\": \"مقر الشركة الرئيسي\",\n  \"address\": \"صنعاء، اليمن\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/sessions/{{sessionId}}/messages/send-location",
+							"host": ["{{baseUrl}}"],
+							"path": ["sessions", "{{sessionId}}", "messages", "send-location"]
+						}
+					}
+				},
+				{
+					"name": "Send Contact Card",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"chatId\": \"{{testPhone}}\",\n  \"contactName\": \"المهندس محمد الشبلي\",\n  \"contactNumber\": \"967775451608\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/sessions/{{sessionId}}/messages/send-contact",
+							"host": ["{{baseUrl}}"],
+							"path": ["sessions", "{{sessionId}}", "messages", "send-contact"]
+						}
+					}
+				},
+				{
+					"name": "Send Bulk Messages",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"messages\": [\n    {\n      \"chatId\": \"{{testPhone}}\",\n      \"text\": \"رسالة جماعية رقم 1 🚀\"\n    },\n    {\n      \"chatId\": \"{{testPhone}}\",\n      \"text\": \"رسالة جماعية رقم 2 🚀\"\n    }\n  ],\n  \"options\": {\n    \"delayBetweenMessages\": 4000\n  }\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/sessions/{{sessionId}}/messages/send-bulk",
+							"host": ["{{baseUrl}}"],
+							"path": ["sessions", "{{sessionId}}", "messages", "send-bulk"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "4. Webhooks (الويب هوك والأحداث)",
+			"item": [
+				{
+					"name": "List Webhooks",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/sessions/{{sessionId}}/webhooks",
+							"host": ["{{baseUrl}}"],
+							"path": ["sessions", "{{sessionId}}", "webhooks"]
+						}
+					}
+				},
+				{
+					"name": "Register Webhook",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"url\": \"https://webhook.site/your-unique-id\",\n  \"events\": [\"message.received\", \"message.ack\", \"session.status\"],\n  \"secret\": \"my-secret-key\",\n  \"retryCount\": 3\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/sessions/{{sessionId}}/webhooks",
+							"host": ["{{baseUrl}}"],
+							"path": ["sessions", "{{sessionId}}", "webhooks"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "5. Contacts & Groups (جهات الاتصال والمجموعات)",
+			"item": [
+				{
+					"name": "Check WhatsApp Number Existence",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/sessions/{{sessionId}}/contacts/check/967775451608",
+							"host": ["{{baseUrl}}"],
+							"path": ["sessions", "{{sessionId}}", "contacts", "check", "967775451608"]
+						}
+					}
+				},
+				{
+					"name": "List Contacts",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/sessions/{{sessionId}}/contacts",
+							"host": ["{{baseUrl}}"],
+							"path": ["sessions", "{{sessionId}}", "contacts"]
+						}
+					}
+				},
+				{
+					"name": "List Groups",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/sessions/{{sessionId}}/groups",
+							"host": ["{{baseUrl}}"],
+							"path": ["sessions", "{{sessionId}}", "groups"]
+						}
+					}
+				}
+			]
+		}
+	]
+}

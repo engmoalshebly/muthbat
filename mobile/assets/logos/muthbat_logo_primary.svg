@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 120" width="420" height="120" fill="none">
+  <defs>
+    <linearGradient id="petrolP" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#184E5D"/>
+      <stop offset="100%" stop-color="#123B46"/>
+    </linearGradient>
+    <linearGradient id="tealP" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1FB2A0"/>
+      <stop offset="100%" stop-color="#138577"/>
+    </linearGradient>
+    <linearGradient id="goldP" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F3C363"/>
+      <stop offset="100%" stop-color="#D9A441"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Left/RTL Icon Group (X: 300 to 400) -->
+  <g transform="translate(300, 0)">
+    <!-- Document 1 -->
+    <rect x="10" y="18" width="40" height="64" rx="7" fill="url(#petrolP)"/>
+    <!-- Document 2 -->
+    <rect x="32" y="30" width="40" height="68" rx="7" fill="url(#tealP)"/>
+    <!-- Accents -->
+    <rect x="18" y="28" width="16" height="3" rx="1.5" fill="#FFFFFF" fill-opacity="0.4"/>
+    <rect x="46" y="82" width="16" height="3" rx="1.5" fill="#FFFFFF" fill-opacity="0.4"/>
+    <!-- Golden Seal Checkmark -->
+    <circle cx="41" cy="55" r="18" fill="#FFFFFF"/>
+    <circle cx="41" cy="55" r="15" fill="url(#petrolP)"/>
+    <path d="M33 55 L38.5 60.5 L49.5 48.5" stroke="url(#goldP)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Typography Group (RTL Aligned from Right to Left) -->
+  <!-- Arabic Wordmark: مُثبَت -->
+  <text x="280" y="65" font-family="'IBM Plex Sans Arabic', 'Tajawal', 'Cairo', sans-serif" font-size="44" font-weight="800" fill="#123B46" text-anchor="end">مُثبَت</text>
+  
+  <!-- English Wordmark: MUTHBAT -->
+  <text x="280" y="88" font-family="'Manrope', 'Montserrat', 'Helvetica', sans-serif" font-size="14" font-weight="700" letter-spacing="4.5" fill="#138577" text-anchor="end">MUTHBAT</text>
+
+  <!-- Gold Accent Dot / Security Bar -->
+  <circle cx="288" cy="84" r="3" fill="#D9A441"/>
+
+  <!-- Brand Tagline: كل حق.. مُثبَت. -->
+  <text x="280" y="106" font-family="'Tajawal', 'Cairo', sans-serif" font-size="11" font-weight="500" fill="#5E7175" text-anchor="end">كل حق.. مُثبَت.</text>
+</svg>

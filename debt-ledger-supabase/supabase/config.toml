@@ -1,0 +1,110 @@
+project_id = "debt-ledger"
+
+[api]
+enabled = true
+port = 55321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 55322
+shadow_port = 55320
+major_version = 17
+
+[db.pooler]
+enabled = false
+port = 55329
+pool_mode = "transaction"
+default_pool_size = 20
+max_client_conn = 100
+
+[realtime]
+enabled = true
+
+[studio]
+enabled = true
+port = 55323
+api_url = "http://127.0.0.1:55321"
+
+[inbucket]
+enabled = true
+port = 55324
+smtp_port = 55325
+
+[storage]
+enabled = true
+file_size_limit = "10MiB"
+
+[analytics]
+enabled = true
+port = 55327
+vector_port = 55328
+backend = "postgres"
+
+[auth]
+enabled = true
+site_url = "debtledger://login-callback"
+additional_redirect_urls = ["debtledger://login-callback", "http://127.0.0.1:3000"]
+jwt_expiry = 900
+enable_signup = false
+enable_anonymous_sign_ins = false
+minimum_password_length = 8
+
+[auth.email]
+enabled = true
+enable_signup = false
+double_confirm_changes = false
+enable_confirmations = true
+
+[auth.sms]
+enable_signup = true
+enable_confirmations = true
+
+# Enables the phone provider in local development without sending a second SMS.
+# The application still performs its real verification through the server-side
+# OpenWA challenge; this fixed value is never shown or accepted by the app.
+[auth.sms.test_otp]
+967779472403 = "000000"
+
+[auth.sms.twilio_verify]
+# Local placeholder: it enables phone/password sessions in GoTrue. The app
+# never asks GoTrue to send an OTP; OpenWA handles delivery and verification.
+# Staging/prod must replace these values with real secret-backed credentials.
+enabled = true
+account_sid = "local-openwa-bridge"
+message_service_sid = "local-openwa-bridge"
+auth_token = "local-openwa-bridge"
+
+[functions.bootstrap-user-contact]
+verify_jwt = true
+
+[functions.customer-directory]
+verify_jwt = true
+
+[functions.signed-document-upload]
+verify_jwt = true
+
+[functions.finalize-document-upload]
+verify_jwt = true
+
+[functions.generate-statement]
+verify_jwt = true
+
+[functions.verify-statement]
+verify_jwt = false
+
+[functions.send-whatsapp-otp]
+verify_jwt = false
+
+[functions.verify-whatsapp-otp]
+verify_jwt = false
+
+# Worker functions: JWT verified + requireWorkerSecret() in the handler.
+# Anonymous callers get 401 from Supabase Gateway; callers without WORKER_SECRET
+# get 401 from the function body. Double-gated security.
+[functions.process-notification-outbox]
+verify_jwt = true
+
+[functions.process-automation-rules]
+verify_jwt = true

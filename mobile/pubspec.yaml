@@ -1,0 +1,56 @@
+name: muthbat
+description: "منصة مُثبَت | MUTHBAT - لتوثيق وإدارة المعاملات المالية والديون"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.8
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # Architecture & State Management
+  flutter_riverpod: ^2.6.1
+
+  # Backend & Network
+  supabase_flutter: ^2.8.3
+  http: ^1.2.2
+
+  # UI, Typography & Animations
+  google_fonts: ^6.2.1
+  flutter_svg: ^2.0.17
+  flutter_animate: ^4.5.2
+  cupertino_icons: ^1.0.8
+
+  # Local Database, Cache & Offline Sync
+  sqflite: ^2.4.2
+  path: ^1.9.1
+  shared_preferences: ^2.5.4
+  uuid: ^4.5.1
+  connectivity_plus: ^6.1.4
+
+  # Utilities
+  intl: ^0.20.2
+  image_picker: ^1.2.3
+  url_launcher: ^6.3.2
+  lucide_icons_flutter: ^3.1.15
+  flutter_contacts: 2.1.0
+  share_plus: ^13.3.0
+  path_provider: ^2.1.6
+  file_saver: ^0.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/logos/
+    - assets/icons/
+    - assets/images/

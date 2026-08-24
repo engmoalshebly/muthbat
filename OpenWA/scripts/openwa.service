@@ -1,0 +1,35 @@
+[Unit]
+Description=OpenWA - WhatsApp API Gateway Service
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=openwa
+Group=openwa
+WorkingDirectory=/opt/openwa
+Environment=NODE_ENV=production
+Environment=PORT=2785
+EnvironmentFile=-/opt/openwa/.env
+ExecStart=/usr/bin/node /opt/openwa/dist/main.js
+Restart=always
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openwa
+KillSignal=SIGTERM
+TimeoutStopSec=20s
+
+# Security Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/opt/openwa/data /opt/openwa/dist
+
+# Resource limits (prevent runaway Chromium memory leaks)
+LimitNOFILE=65536
+MemoryMax=3G
+
+[Install]
+WantedBy=multi-user.target

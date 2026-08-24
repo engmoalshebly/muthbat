@@ -1,0 +1,85 @@
+# =============================================================================
+# gitleaks — نظام «مُثبَت / دفتر ديون»
+# المرجع: fix-plan.md (فوري بند 4: تفعيل gitleaks مع قاعدة نمط owa_k1_)
+#         fix-plan/08-testing-ci.md (SEC-01) و fix-plan/03-security-*.md (03-1.4)
+# يُلتقط تلقائياً بواسطة gitleaks-action في .github/workflows/ci.yml.
+# =============================================================================
+
+title = "debt-ledger gitleaks config"
+
+# القواعد الافتراضية المدمجة في gitleaks تبقى فعالة؛ نضيف عليها قواعد المشروع.
+
+[extend]
+useDefault = true
+
+# -----------------------------------------------------------------------------
+# قاعدة إلزامية: مفتاح OpenWA المسرَّب سابقاً في send-whatsapp-otp/index.ts:4-5
+# أي ظهور لهذا النمط (حتى في التاريخ) = فشل CI فوري.
+# -----------------------------------------------------------------------------
+[[rules]]
+id = "openwa-api-key"
+description = "OpenWA API key (previously leaked — must never reappear)"
+regex = '''owa_k1_[A-Za-z0-9]{16,}'''
+keywords = ["owa_k1_"]
+
+# -----------------------------------------------------------------------------
+# أسرار Supabase: مفاتيح service_role و anon (JWT بصيغة Supabase النموذجية)
+# -----------------------------------------------------------------------------
+[[rules]]
+id = "supabase-service-role-jwt"
+description = "Supabase service_role JWT"
+regex = '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'''
+keywords = ["service_role", "supabase"]
+
+[[rules]]
+id = "supabase-publishable-key"
+description = "Supabase publishable/secret API key (sb_ format)"
+regex = '''sb_(publishable|secret)_[A-Za-z0-9]{20,}'''
+keywords = ["sb_publishable_", "sb_secret_"]
+
+# -----------------------------------------------------------------------------
+# Twilio (مزود OTP المحسوم — القرار 3 في fix-plan.md)
+# -----------------------------------------------------------------------------
+[[rules]]
+id = "twilio-api-key"
+description = "Twilio API key SID / auth token"
+regex = '''SK[0-9a-fA-F]{32}'''
+keywords = ["twilio", "TWILIO"]
+
+# -----------------------------------------------------------------------------
+# أسرار العمال الداخلية (WORKER_SECRET وما شابه) — أي قيمة نصية مباشرة
+# -----------------------------------------------------------------------------
+[[rules]]
+id = "hardcoded-worker-secret"
+description = "Hardcoded WORKER_SECRET value in source"
+regex = '''WORKER_SECRET["']?\s*[:=]\s*["'][A-Za-z0-9_\-]{12,}["']'''
+keywords = ["WORKER_SECRET"]
+
+# -----------------------------------------------------------------------------
+# Allowlist: مسارات وأنماط مشروعة لا تُعتبر تسريباً
+# -----------------------------------------------------------------------------
+[allowlist]
+description = "global allowlist"
+paths = [
+  '''node_modules/''',
+  '''\.dart_tool/''',
+  '''mobile/build/''',
+  '''package-lock\.json''',
+  '''pubspec\.lock''',
+  '''\.gitleaks\.toml''',
+  # وثائق التدقيق والخطط تذكر المفتاح المسرَّب عمداً في سياق توثيق الثغرة
+  # (الملفات نفسها تُراجَع وتُنقّى ضمن خطة الأمن 03-1.3؛ الاستثناء مؤقت وموثق).
+  # الاستثناء لا يشمل أي كود مصدري — whatsapp_otp_service.dart يبقى مكشوفاً
+  # للقاعدة ويفشل CI حتى حذفه وفق القرار 3 في fix-plan.md.
+  '''analysis-reports/''',
+  '''fix-plan/''',
+  '''fix-plan\.md''',
+  '''final-audit-report\.md''',
+  '''plan\.md''',
+]
+
+# قيم نائبة موثقة (placeholders) شائعة في الوثائق والأمثلة — ليست أسراراً حقيقية
+regexes = [
+  '''owa_k1_(EXAMPLE|PLACEHOLDER|YOUR|XXX)''',
+  '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.(example|EXAMPLE|xxx|YOUR)''',
+]

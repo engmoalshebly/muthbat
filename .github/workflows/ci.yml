@@ -1,0 +1,227 @@
+# =============================================================================
+# CI — نظام «مُثبَت / دفتر ديون»
+# المرجع الملزم: fix-plan/08-testing-ci.md §6 (مراحل وبوابات) و§8 الخطوات 1–3.
+#
+# قواعد فشل الدمج (قرار 5 في الخطة — إلزامية):
+#   يفشل الدمج عند:
+#     1) كشف gitleaks لأي سر (بما فيه نمط owa_k1_ المسرَّب سابقاً).
+#     2) فشل SEC-03: أي service-role key داخل كود العميل mobile/lib/.
+#     3) فشل `supabase db lint` أو أي اختبار pgTAP.
+#     4) فشل `supabase db reset` (تطبيق الترحيلات من الصفر — بوابة انحدار X-1).
+#     5) فشل `deno test` (وحدة) أو اختبارات تكامل الدوال HTTP.
+#     6) فشل `flutter analyze` بأي error (تحذيرات info مسموحة مؤقتاً حتى مرحلة 1)
+#        أو فشل أي اختبار Flutter.
+#   لا بوابة تغطية نسبية في مرحلة صفر؛ تُفرض عتبة التغطية ابتداءً من مرحلة 1
+#   (70% على mobile/lib/core — انظر §7 والخطوة 19).
+#
+# حماية الفرع المطلوبة على main (تُضبط من إعدادات GitHub — لا يمكن فرضها من YAML):
+#   - Require status checks to pass before merging: job باسم "merge-gate".
+#   - Require branches to be up to date before merging.
+#   - Include administrators (لا استثناءات).
+#   - ممنوع الـ force push على main.
+#
+# ملاحظات حالة متوقعة (موثقة في الخطة §8 و§9):
+#   - مرحلة supabase-db ستكون حمراء حتى إصلاح/تجميد الترحيل 0012 (X-1) — مقصود.
+#   - فحص الأسرار سيكون أحمر حتى تدوير سر OpenWA وحذفه من الكود والتاريخ — مقصود.
+#   - مرحلتا edge-unit/edge-integration تعتمدان على ملفات اختبار يُنشئها وكلاء
+#     آخرون (خطوات 8–10)؛ حتى ذلك الحين تفشل edge-integration لعدم وجود
+#     supabase/functions/tests/integration/ — مقصود كبوابة.
+# =============================================================================
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # المرحلة 1 — فحص الأسرار (الخطوة 2 / SEC-01)
+  # ---------------------------------------------------------------------------
+  secrets:
+    name: secrets-scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # كامل التاريخ — إلزامي لكشف الأسرار التاريخية
+      - name: gitleaks scan (full history)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_ENABLE_COMMENTS: 'true'
+          # .gitleaks.toml في جذر المستودع يُلتقط تلقائياً ويتضمن قاعدة owa_k1_
+
+  # ---------------------------------------------------------------------------
+  # المرحلة 1ب — حارس أسرار العميل (SEC-03)
+  # ---------------------------------------------------------------------------
+  client-secrets-guard:
+    name: client-secrets-guard (SEC-03)
+    needs: secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: no service-role key in client code
+        run: |
+          if grep -rEi 'service_role|eyJhbGciOi[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*service_role' mobile/lib/; then
+            echo '::error::service key leaked into client code (SEC-03)'
+            exit 1
+          fi
+          echo 'SEC-03 clean: no service-role key in mobile/lib/'
+
+  # ---------------------------------------------------------------------------
+  # المرحلة 2 — الباكند: lint + pgTAP + تطبيق الترحيلات من الصفر (الخطوات 1، 3)
+  # ---------------------------------------------------------------------------
+  supabase-db:
+    name: supabase-db (lint + pgTAP + fresh-apply)
+    needs: secrets
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: debt-ledger-supabase
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start local stack (fresh DB — migration regression gate)
+        run: supabase start --yes
+      - name: Lint migrations
+        run: supabase db lint --local
+      - name: Run pgTAP suite
+        run: supabase test db
+      - name: Fresh reset (X-1 regression — migration 0012 must apply cleanly)
+        run: supabase db reset --yes
+      - name: Stop local stack
+        if: always()
+        run: supabase stop --no-backup || true
+
+  # ---------------------------------------------------------------------------
+  # المرحلة 3 — اختبارات وحدة Edge Functions (الخطوة 9 / EF-U01..U03)
+  # ---------------------------------------------------------------------------
+  edge-unit:
+    name: edge-unit (deno test)
+    needs: secrets
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: debt-ledger-supabase
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+      - name: Run pure-logic unit tests
+        # لا --allow-net عمداً: أي استيراد يسحب شبكة في اختبار وحدة يفشل (قرار 2)
+        run: deno test --allow-env supabase/functions/
+
+  # ---------------------------------------------------------------------------
+  # المرحلة 4 — اختبارات تكامل Edge Functions (الخطوة 10 / EF-I01..I07)
+  # ---------------------------------------------------------------------------
+  edge-integration:
+    name: edge-integration (HTTP suite)
+    needs: secrets
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: debt-ledger-supabase
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - uses: denoland/setup-deno@v2
+      - name: Start local stack
+        run: supabase start --yes
+      - name: Serve functions
+        run: supabase functions serve --no-verify-jwt > functions.log 2>&1 &
+      - name: Run HTTP integration suite
+        run: deno test --allow-net --allow-env supabase/functions/tests/integration/
+      - name: Dump functions log on failure
+        if: failure()
+        run: cat functions.log || true
+      - name: Stop local stack
+        if: always()
+        run: supabase stop --no-backup || true
+
+  # ---------------------------------------------------------------------------
+  # المرحلة 5 — الموبايل: analyze + test (الخطوة 1 / بوابة 5)
+  # ---------------------------------------------------------------------------
+  flutter:
+    name: flutter (analyze + test)
+    needs: secrets
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Static analysis (errors fail; infos allowed until phase 1)
+        run: flutter analyze --no-fatal-infos
+      - name: Run tests with coverage
+        run: flutter test --coverage
+      - name: Coverage report (gate activates in phase 1 — step 19)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          TOTAL=$(grep -c '^DA:' coverage/lcov.info || true)
+          HIT=$(grep -cE '^DA:[0-9]+,[1-9]' coverage/lcov.info || true)
+          echo "lines=$TOTAL hit=$HIT"
+          # مرحلة 1: فرض عتبة 70% على lib/core/ (fix-plan/08-testing-ci.md §7)
+
+  # ---------------------------------------------------------------------------
+  # المرحلة 5ب — بناء APK للإصدار (فقط عند الدمج في main)
+  # ---------------------------------------------------------------------------
+  flutter-build:
+    name: flutter-build (APK)
+    needs: flutter
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Build release APK
+        run: |
+          flutter build apk --release \
+            --dart-define=SUPABASE_URL=${{ secrets.SUPABASE_URL }} \
+            --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }} \
+            --dart-define=APP_ENV=production
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk
+          path: mobile/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # المرحلة 6 — بوابة الدمج الموحدة
+  # تُشترط في حماية فرع main كفحص واحد؛ تفشل إن فشلت أي مرحلة سابقة.
+  # ---------------------------------------------------------------------------
+  merge-gate:
+    name: merge-gate
+    needs:
+      - secrets
+      - client-secrets-guard
+      - supabase-db
+      - edge-unit
+      - edge-integration
+      - flutter
+    runs-on: ubuntu-latest
+    steps:
+      - name: All required stages passed
+        run: echo "merge-gate green — merge allowed"
