@@ -1,3 +1,4 @@
+import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -168,7 +169,7 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
   }
 
   void _showMessage(String message, {required bool isError}) {
-    ScaffoldMessenger.of(context)
+    TopNotice.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(

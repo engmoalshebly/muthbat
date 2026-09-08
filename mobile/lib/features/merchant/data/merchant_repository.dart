@@ -875,32 +875,32 @@ class MerchantRepository {
     }
   }
 
-  /// دعوة عضو — RPC `invite_business_member` بـ `p_target_user_id`
-  /// (الجسر المصحح، خطة 06-D6): التوقيع الخلفي يشترط UUID؛ الدعوة بالهاتف
-  /// تُدعم في مرحلة 1 عبر توسيع خلفي (p_phone / member-directory).
+  /// دعوة عضو بالهاتف. يحل الخادم الهاتف إلى مستخدم مسجل من دون كشف أي
+  /// بيانات تعريفية، ثم ينفذ RPC الدعوة بصلاحيات المستخدم الحالي.
   Future<bool> inviteMember({
     required String businessId,
     String? targetUserId,
     String? phone,
     required String role,
   }) async {
+    final normalizedPhone = phone?.trim() ?? '';
     final target = targetUserId?.trim() ?? '';
-    if (!_uuidRegex.hasMatch(target)) {
+    if (normalizedPhone.isEmpty && !_uuidRegex.hasMatch(target)) {
       throw const MerchantApiException(
-        code: 'invalid_user_id',
-        message:
-            'معرّف المستخدم غير صالح. أدخل معرّف UUID صحيحاً (الدعوة بالهاتف تُدعم في إصدار لاحق).',
+        code: 'invalid_invitee',
+        message: 'أدخل رقم هاتف الموظف بصيغة صحيحة أو معرّف مستخدم صالح.',
       );
     }
 
     try {
       final client = Supabase.instance.client;
-      await client.rpc(
-        RpcContract.inviteBusinessMember,
-        params: {
-          'p_business_id': businessId,
-          'p_target_user_id': target,
-          'p_role': role,
+      await client.functions.invoke(
+        RpcContract.edgeMemberInvite,
+        body: {
+          'businessId': businessId,
+          'role': role,
+          if (normalizedPhone.isNotEmpty) 'phone': normalizedPhone,
+          if (normalizedPhone.isEmpty) 'targetUserId': target,
         },
       );
       return true;
@@ -1008,11 +1008,6 @@ class MerchantRepository {
         },
       );
 
-      final statementData = await client
-          .from('statements')
-          .select()
-          .eq('id', res as String)
-          .single();
       final pdfResponse = await client.functions.invoke(
         'generate-statement',
         body: {'statementId': res},

@@ -29,12 +29,10 @@ select ok(
   not has_function_privilege('anon', 'public.service_verify_whatsapp_otp(uuid,text,text)', 'execute'),
   'Anonymous callers cannot verify OTP through the service RPC'
 );
-select like(
-  pg_get_functiondef('private.service_request_otp(text)'::regprocedure),
-  '%gen_random_bytes%',
+select ok(
+  pg_get_functiondef('private.service_request_otp(text)'::regprocedure) like '%gen_random_bytes%',
   'OTP generation uses cryptographic random bytes'
 );
 
 select * from finish();
 rollback;
-

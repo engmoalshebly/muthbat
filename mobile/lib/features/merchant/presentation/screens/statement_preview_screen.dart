@@ -1,3 +1,4 @@
+import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'dart:io';
 
 import 'package:file_saver/file_saver.dart';
@@ -9,6 +10,7 @@ import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../app/theme/app_colors.dart';
 import '../../../../app/theme/app_icons.dart';
 import '../../../../app/theme/app_typography.dart';
@@ -37,7 +39,13 @@ class StatementPreviewScreen extends StatelessWidget {
   }
 
   Future<Uint8List> _downloadPdfBytes() async {
-    final url = statement.downloadUrl;
+    var url = statement.downloadUrl;
+    if (statement.pdfObjectPath != null) {
+      url = await Supabase.instance.client.storage
+          .from('statements')
+          .createSignedUrl(statement.pdfObjectPath!, 300)
+          .timeout(const Duration(seconds: 15));
+    }
     if (url == null || url.isEmpty) {
       throw StateError('pdf_not_ready');
     }
@@ -55,7 +63,7 @@ class StatementPreviewScreen extends StatelessWidget {
   }
 
   void _showWorking(BuildContext context, String message) {
-    ScaffoldMessenger.of(context)
+    TopNotice.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
@@ -80,7 +88,7 @@ class StatementPreviewScreen extends StatelessWidget {
 
   void _showPdfError(BuildContext context, Object error) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context)
+    TopNotice.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         const SnackBar(
@@ -102,13 +110,20 @@ class StatementPreviewScreen extends StatelessWidget {
       );
       await file.writeAsBytes(bytes, flush: true);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      TopNotice.of(context).hideCurrentSnackBar();
       await SharePlus.instance.share(
         ShareParams(
           files: [XFile(file.path, mimeType: 'application/pdf')],
           fileNameOverrides: ['$_pdfFileName.pdf'],
           title: 'مشاركة كشف الحساب',
           text: 'كشف حساب العميل ${customer.localDisplayName}',
+          sharePositionOrigin:
+              (context.findRenderObject() as RenderBox?) == null
+              ? null
+              : (context.findRenderObject() as RenderBox).localToGlobal(
+                      Offset.zero,
+                    ) &
+                    (context.findRenderObject() as RenderBox).size,
         ),
       );
     } catch (error) {
@@ -127,7 +142,7 @@ class StatementPreviewScreen extends StatelessWidget {
         mimeType: MimeType.pdf,
       );
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
+      TopNotice.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
@@ -169,7 +184,7 @@ class StatementPreviewScreen extends StatelessWidget {
                 Clipboard.setData(
                   ClipboardData(text: statement.verificationCode),
                 );
-                ScaffoldMessenger.of(context).showSnackBar(
+                TopNotice.of(context).showSnackBar(
                   SnackBar(
                     content: Text(
                       'تم نسخ رمز التحقق: ${statement.verificationCode}',
@@ -349,7 +364,7 @@ class StatementPreviewScreen extends StatelessWidget {
                                         text: statement.verificationCode,
                                       ),
                                     );
-                                    ScaffoldMessenger.of(context).showSnackBar(
+                                    TopNotice.of(context).showSnackBar(
                                       const SnackBar(
                                         content: Text('تم نسخ رمز التحقق'),
                                       ),
@@ -471,7 +486,7 @@ class StatementPreviewScreen extends StatelessWidget {
                       mode: LaunchMode.externalApplication,
                     );
                     if (!opened && context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
+                      TopNotice.of(context).showSnackBar(
                         const SnackBar(
                           content: Text(
                             'تعذر فتح ملف PDF. تأكد من وجود متصفح أو قارئ PDF.',
@@ -482,7 +497,7 @@ class StatementPreviewScreen extends StatelessWidget {
                     }
                   } catch (error) {
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
+                      TopNotice.of(context).showSnackBar(
                         SnackBar(
                           content: Text('تعذر فتح ملف PDF: $error'),
                           backgroundColor: AppColors.error,
@@ -533,7 +548,7 @@ class StatementPreviewScreen extends StatelessWidget {
 ${isLocalPending ? 'الحالة: محلي - بانتظار المزامنة' : 'رمز التحقق الرسمي: ${statement.verificationCode}'}
 ''';
                 Clipboard.setData(ClipboardData(text: shareText));
-                ScaffoldMessenger.of(context).showSnackBar(
+                TopNotice.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('تم نسخ نص كشف الحساب للمشاركة'),
                     backgroundColor: AppColors.success,

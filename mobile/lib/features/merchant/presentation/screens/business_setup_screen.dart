@@ -1,3 +1,4 @@
+import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -12,6 +13,7 @@ import '../../../../shared/widgets/brand_logo.dart';
 import '../../../../shared/widgets/custom_button.dart';
 import '../../../../core/finance/currency_info.dart';
 import '../controllers/merchant_controller.dart';
+import '../../../auth/presentation/controllers/auth_controller.dart';
 
 /// شاشة معالج إعداد المنشأة لأول مرة (First-Time Business Setup Wizard)
 class BusinessSetupScreen extends ConsumerStatefulWidget {
@@ -84,9 +86,14 @@ class _BusinessSetupScreenState extends ConsumerState<BusinessSetupScreen> {
           logoExtension: logoExtension,
         );
 
+    if (!mounted) return;
     setState(() => _isSubmitting = false);
 
     if (success && mounted) {
+      await ref
+          .read(authControllerProvider.notifier)
+          .refreshLocalBusinessAccess();
+      if (!mounted) return;
       Navigator.pushNamedAndRemoveUntil(
         context,
         AppRoutes.merchantHome,
@@ -96,7 +103,7 @@ class _BusinessSetupScreenState extends ConsumerState<BusinessSetupScreen> {
       final error =
           ref.read(merchantControllerProvider).lastError ??
           'تعذر إنشاء المنشأة. يرجى المحاولة مجدداً.';
-      ScaffoldMessenger.of(context).showSnackBar(
+      TopNotice.of(context).showSnackBar(
         SnackBar(content: Text(error), backgroundColor: AppColors.error),
       );
     }

@@ -37,6 +37,7 @@ class RpcContract {
 
   // ==================== Edge Functions ====================
   static const String edgeCustomerDirectory = 'customer-directory';
+  static const String edgeMemberInvite = 'member-invite';
 
   // ==================== أنواع أوامر طابور المزامنة ====================
   static const String cmdCreateBusiness = 'create_business';

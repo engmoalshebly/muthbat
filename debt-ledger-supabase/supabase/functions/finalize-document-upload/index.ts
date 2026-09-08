@@ -112,7 +112,10 @@ Deno.serve(async (request) => {
     const linkColumn = session.entity_type === "ledger_entry" ? "entry_id" : "message_id";
     const { error: linkError } = await admin.from(linkTable).insert({ [linkColumn]: session.entity_id, file_id: file.id });
     if (linkError) throw linkError;
-    const { error: consumeError } = await admin.from("upload_sessions").update({ consumed_at: new Date().toISOString() }).eq("id", session.id });
+    const { error: consumeError } = await admin
+      .from("upload_sessions")
+      .update({ consumed_at: new Date().toISOString() })
+      .eq("id", session.id);
     if (consumeError) throw consumeError;
     return json(request, { fileId: file.id, sha256Hex: hash }, 201);
   } catch (error) {

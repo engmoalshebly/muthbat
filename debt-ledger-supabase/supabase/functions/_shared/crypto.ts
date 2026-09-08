@@ -50,7 +50,10 @@ async function keyValueForLocalRuntime(purpose: string): Promise<string | null> 
 }
 
 export function normalizeE164(input: string): string {
-  const value = input.trim().replace(/[\s()\-]/g, "").replace(/^00/, "+");
+  const compact = input.trim().replace(/[\s()\-]/g, "").replace(/^00/, "+");
+  // GoTrue serializes a confirmed phone on the User object without the leading
+  // plus sign even when it was created from a canonical E.164 value.
+  const value = compact.startsWith("+") ? compact : `+${compact}`;
   if (!/^\+[1-9]\d{7,14}$/.test(value)) throw new Error("invalid_phone");
   return value;
 }

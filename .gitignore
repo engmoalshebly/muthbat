@@ -21,6 +21,8 @@ mobile/build/
 **/.venv/
 **/venv/
 debt-ledger-supabase/tmp/
+debt-ledger-supabase/.verification/
+output/
 
 # Local reference material is not part of the product source and may contain
 # private documents or customer exports.

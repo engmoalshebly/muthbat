@@ -11,21 +11,16 @@ import '../../../app/theme/app_icons.dart';
 class SyncStatusIndicator extends StatelessWidget {
   final bool compact;
 
-  const SyncStatusIndicator({
-    super.key,
-    this.compact = false,
-  });
+  const SyncStatusIndicator({super.key, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<SyncProgress>(
       stream: SyncEngine.instance.progressStream,
       builder: (context, snapshot) {
-        final progress = snapshot.data ??
-            const SyncProgress(
-              state: SyncState.synced,
-              pendingCount: 0,
-            );
+        final progress =
+            snapshot.data ??
+            const SyncProgress(state: SyncState.synced, pendingCount: 0);
 
         if (compact) {
           return _buildCompactBadge(context, progress);
@@ -50,7 +45,9 @@ class SyncStatusIndicator extends StatelessWidget {
       case SyncState.offline:
         badgeColor = Colors.orange;
         icon = AppIcons.offline;
-        label = progress.pendingCount > 0 ? '${progress.pendingCount} معلق' : 'أوفلاين';
+        label = progress.pendingCount > 0
+            ? '${progress.pendingCount} معلق'
+            : 'أوفلاين';
         break;
       case SyncState.error:
         badgeColor = AppColors.error;
@@ -59,7 +56,6 @@ class SyncStatusIndicator extends StatelessWidget {
         break;
       case SyncState.synced:
       case SyncState.idle:
-      default:
         if (progress.pendingCount > 0) {
           badgeColor = Colors.orange;
           icon = AppIcons.pendingUpload;
@@ -97,10 +93,9 @@ class SyncStatusIndicator extends StatelessWidget {
             const SizedBox(width: 5),
             Text(
               label,
-              style: AppTypography.bodySmall(color: badgeColor).copyWith(
-                fontWeight: FontWeight.bold,
-                fontSize: 11,
-              ),
+              style: AppTypography.bodySmall(
+                color: badgeColor,
+              ).copyWith(fontWeight: FontWeight.bold, fontSize: 11),
             ),
           ],
         ),
@@ -110,7 +105,9 @@ class SyncStatusIndicator extends StatelessWidget {
 
   Widget _buildFullBanner(BuildContext context, SyncProgress progress) {
     // إخفاء الشريط التلقائي إذا كانت كل البيانات متزامنة تماماً
-    if (progress.state == SyncState.synced && progress.pendingCount == 0 && progress.deadLetterCount == 0) {
+    if (progress.state == SyncState.synced &&
+        progress.pendingCount == 0 &&
+        progress.deadLetterCount == 0) {
       return const SizedBox.shrink();
     }
 
@@ -147,7 +144,8 @@ class SyncStatusIndicator extends StatelessWidget {
           bgColor = Colors.orange.withValues(alpha: 0.12);
           textColor = Colors.orange.shade800;
           icon = AppIcons.pendingUpload;
-          message = '${progress.pendingCount} عملية محفوظة محلياً بانتظار المزامنة';
+          message =
+              '${progress.pendingCount} عملية محفوظة محلياً بانتظار المزامنة';
         } else {
           return const SizedBox.shrink();
         }
@@ -162,19 +160,20 @@ class SyncStatusIndicator extends StatelessWidget {
         child: Row(
           children: [
             if (progress.state == SyncState.syncing)
-              Icon(icon, size: 18, color: textColor)
-                  .animate(onPlay: (c) => c.repeat())
-                  .rotate(duration: 1.seconds)
+              Icon(
+                icon,
+                size: 18,
+                color: textColor,
+              ).animate(onPlay: (c) => c.repeat()).rotate(duration: 1.seconds)
             else
               Icon(icon, size: 18, color: textColor),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
                 message,
-                style: AppTypography.bodySmall(color: textColor).copyWith(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 12,
-                ),
+                style: AppTypography.bodySmall(
+                  color: textColor,
+                ).copyWith(fontWeight: FontWeight.w600, fontSize: 12),
               ),
             ),
             Icon(AppIcons.chevronEnd, size: 18, color: textColor),
@@ -210,11 +209,7 @@ class _SyncDetailsSheet extends StatelessWidget {
         children: [
           Row(
             children: [
-              AppIconBox.primary(
-                icon: AppIcons.sync,
-                size: 24,
-                padding: 12,
-              ),
+              AppIconBox.primary(icon: AppIcons.sync, size: 24, padding: 12),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
@@ -226,7 +221,9 @@ class _SyncDetailsSheet extends StatelessWidget {
                       progress.lastSyncAt != null
                           ? 'آخر مزامنة ناجحة: ${_formatTime(progress.lastSyncAt!)}'
                           : 'المزامنة تعمل تلقائياً فور توفر الشبكة',
-                      style: AppTypography.bodySmall(color: AppColors.textSecondary),
+                      style: AppTypography.bodySmall(
+                        color: AppColors.textSecondary,
+                      ),
                     ),
                   ],
                 ),
@@ -243,12 +240,24 @@ class _SyncDetailsSheet extends StatelessWidget {
             ),
             child: Column(
               children: [
-                _buildRow('العمليات المعلقة في الطابور', '${progress.pendingCount}', AppColors.textPrimary),
+                _buildRow(
+                  'العمليات المعلقة في الطابور',
+                  '${progress.pendingCount}',
+                  AppColors.textPrimary,
+                ),
                 const Divider(height: 20),
-                _buildRow('العمليات قيد الإرسال', progress.state == SyncState.syncing ? 'نشطة' : 'متوقفة', AppColors.primary),
+                _buildRow(
+                  'العمليات قيد الإرسال',
+                  progress.state == SyncState.syncing ? 'نشطة' : 'متوقفة',
+                  AppColors.primary,
+                ),
                 if (progress.deadLetterCount > 0) ...[
                   const Divider(height: 20),
-                  _buildRow('عمليات بحاجة لمراجعة', '${progress.deadLetterCount}', AppColors.error),
+                  _buildRow(
+                    'عمليات بحاجة لمراجعة',
+                    '${progress.deadLetterCount}',
+                    AppColors.error,
+                  ),
                 ],
               ],
             ),
@@ -265,7 +274,9 @@ class _SyncDetailsSheet extends StatelessWidget {
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
             ),
           ),
           const SizedBox(height: 10),
@@ -279,7 +290,12 @@ class _SyncDetailsSheet extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(label, style: AppTypography.bodySmall()),
-        Text(value, style: AppTypography.bodyMedium(color: valueColor).copyWith(fontWeight: FontWeight.bold)),
+        Text(
+          value,
+          style: AppTypography.bodyMedium(
+            color: valueColor,
+          ).copyWith(fontWeight: FontWeight.bold),
+        ),
       ],
     );
   }

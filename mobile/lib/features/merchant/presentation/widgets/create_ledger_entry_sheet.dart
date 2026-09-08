@@ -1,3 +1,4 @@
+import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -120,7 +121,7 @@ class _CreateLedgerEntrySheetState
         Navigator.pop(context, true);
         final currSymbol = _currencyInfo(_selectedCurrency).symbol;
         final formattedAmount = NumberFormat('#,##0.##', 'ar').format(amount);
-        ScaffoldMessenger.of(context).showSnackBar(
+        TopNotice.of(context).showSnackBar(
           SnackBar(
             content: Row(
               children: [

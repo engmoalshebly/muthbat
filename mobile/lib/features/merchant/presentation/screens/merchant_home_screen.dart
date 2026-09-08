@@ -1,3 +1,4 @@
+import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -97,7 +98,7 @@ class _MerchantHomeScreenState extends ConsumerState<MerchantHomeScreen> {
     );
     if (!mounted || customer == null) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    TopNotice.of(context).showSnackBar(
       SnackBar(
         content: Text('تمت إضافة العميل «${customer.localDisplayName}» بنجاح'),
         backgroundColor: AppColors.success,
@@ -116,7 +117,7 @@ class _MerchantHomeScreenState extends ConsumerState<MerchantHomeScreen> {
   void _openCreateEntry({required String type}) {
     final customers = ref.read(merchantControllerProvider).customers;
     if (customers.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      TopNotice.of(context).showSnackBar(
         SnackBar(
           content: const Row(
             children: [
@@ -184,7 +185,7 @@ class _MerchantHomeScreenState extends ConsumerState<MerchantHomeScreen> {
 
       final error = ref.read(merchantControllerProvider).lastError;
       if (error != null && error.isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        TopNotice.of(context).showSnackBar(
           SnackBar(content: Text(error), backgroundColor: AppColors.error),
         );
       }
@@ -372,7 +373,6 @@ class _MerchantHomeScreenState extends ConsumerState<MerchantHomeScreen> {
   Widget _buildHomeTab() {
     final state = ref.watch(merchantControllerProvider);
     final authState = ref.watch(authControllerProvider);
-    final currencyFormatter = NumberFormat('#,##0', 'ar');
     final userName = authState.displayName ?? 'التاجر';
 
     // تحية زمنية
@@ -1694,9 +1694,10 @@ class _MerchantHomeScreenState extends ConsumerState<MerchantHomeScreen> {
     );
   }
 
+  // محفوظة لتصميم الشاشة التالي؛ لا تدخل المسار الحالي.
+  // ignore: unused_element
   Widget _buildRecentCustomersList() {
     final state = ref.watch(merchantControllerProvider);
-    final currencyFormatter = NumberFormat('#,##0', 'ar');
     final recentCustomers = state.customers.take(4).toList();
 
     if (recentCustomers.isEmpty) {
@@ -2350,7 +2351,25 @@ class _MerchantHomeScreenState extends ConsumerState<MerchantHomeScreen> {
         .where((entry) => entry.direction == 'credit')
         .fold<double>(0, (sum, entry) => sum + entry.amount);
     final net = debits - credits;
-    final collectionRate = debits == 0 ? 0.0 : (credits / debits) * 100;
+    final reversedIds = state.ledgerEntries
+        .where((entry) => entry.isReversed)
+        .map((entry) => entry.id)
+        .toSet();
+    final collected = entries
+        .where(
+          (entry) =>
+              entry.entryType == 'payment' && !reversedIds.contains(entry.id),
+        )
+        .fold<double>(0, (sum, entry) => sum + entry.amount);
+    final issuedDebt = entries
+        .where(
+          (entry) =>
+              entry.entryType == 'debt' && !reversedIds.contains(entry.id),
+        )
+        .fold<double>(0, (sum, entry) => sum + entry.amount);
+    final collectionRate = issuedDebt == 0
+        ? 0.0
+        : (collected / issuedDebt) * 100;
     final symbol = CurrencyCatalog.forCode(currency).symbol;
     final formatter = NumberFormat('#,##0.##', 'ar');
 
@@ -2484,13 +2503,13 @@ class _MerchantHomeScreenState extends ConsumerState<MerchantHomeScreen> {
               children: [
                 _analyticsMetric(
                   'الديون المضافة',
-                  '${formatter.format(debits)} $symbol',
+                  '${formatter.format(issuedDebt)} $symbol',
                   AppIcons.debt,
                   AppColors.debtRed,
                 ),
                 _analyticsMetric(
                   'المبالغ المحصلة',
-                  '${formatter.format(credits)} $symbol',
+                  '${formatter.format(collected)} $symbol',
                   AppIcons.payment,
                   AppColors.paymentGreen,
                 ),
@@ -2501,8 +2520,10 @@ class _MerchantHomeScreenState extends ConsumerState<MerchantHomeScreen> {
                   net >= 0 ? AppColors.warning : AppColors.paymentGreen,
                 ),
                 _analyticsMetric(
-                  'نسبة التحصيل',
-                  '${formatter.format(collectionRate)}%',
+                  'السداد مقابل الدين الجديد',
+                  issuedDebt == 0
+                      ? 'لا توجد ديون جديدة'
+                      : '${formatter.format(collectionRate)}%',
                   Icons.percent_rounded,
                   AppColors.primary,
                 ),
@@ -2511,7 +2532,8 @@ class _MerchantHomeScreenState extends ConsumerState<MerchantHomeScreen> {
             const SizedBox(height: 14),
             _analyticsCard(
               title: 'حركة آخر 7 أيام',
-              subtitle: 'الأحمر ديون، والأخضر تحصيلات - $currency',
+              subtitle:
+                  'الأحمر حركة مدينة، والأخضر حركة دائنة (تشمل الخصم والعكس) - $currency',
               child: SizedBox(
                 height: 150,
                 child: Row(

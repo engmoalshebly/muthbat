@@ -1,3 +1,4 @@
+import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -212,7 +213,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                       entry: entry,
                     );
                 if (!sent && mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  TopNotice.of(context).showSnackBar(
                     const SnackBar(
                       content: Text(
                         'تعذر فتح تطبيق واتساب. يرجى التأكد من تثبيته على جهازك.',
@@ -286,7 +287,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                     recentEntries: _entries,
                   );
               if (!sent && mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
+                TopNotice.of(context).showSnackBar(
                   const SnackBar(
                     content: Text(
                       'تعذر فتح تطبيق واتساب. يرجى التأكد من تثبيته على جهازك.',
@@ -1500,7 +1501,7 @@ class _LedgerEntryDetailsSheet extends StatelessWidget {
     if (uri == null ||
         !await launchUrl(uri, mode: LaunchMode.externalApplication)) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        TopNotice.of(context).showSnackBar(
           const SnackBar(
             content: Text('تعذر فتح المرفق على هذا الجهاز'),
             backgroundColor: AppColors.warning,

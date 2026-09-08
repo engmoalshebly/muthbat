@@ -77,18 +77,13 @@ Deno.serve(async (request) => {
 
     if (phone) {
       const hash = await phoneHash(phone);
-      const { data: matches, error: lookupError } = await admin.rpc("service_find_customer_by_phone_hash", { p_phone_hash: hash });
+      const { data: matches, error: lookupError } = await admin.rpc("service_resolve_customer_phone", {
+        p_phone_hash: hash, p_phone_ciphertext: await encryptPhone(phone),
+        p_phone_last4: phone.slice(-4), p_key_version: phoneKeyVersion(),
+      });
       if (lookupError) throw lookupError;
       customer = matches?.[0];
-      if (!customer) {
-        const { data: created, error: createError } = await admin.from("customers").insert({}).select("id,user_id,global_code").single();
-        if (createError || !created) throw createError ?? new Error("customer_create_failed");
-        const { error: contactError } = await admin.rpc("service_upsert_customer_contact", {
-          p_customer_id: created.id, p_phone_hash: hash, p_phone_ciphertext: await encryptPhone(phone), p_phone_last4: phone.slice(-4), p_key_version: phoneKeyVersion(),
-        });
-        if (contactError) throw contactError;
-        customer = { customer_id: created.id, user_id: null, global_code: created.global_code, phone_last4: phone.slice(-4) };
-      }
+      if (!customer) throw new Error("customer_resolve_failed");
     } else {
       const { data: created, error: createError } = await admin.from("customers").insert({}).select("id,user_id,global_code").single();
       if (createError || !created) throw createError ?? new Error("customer_create_failed");

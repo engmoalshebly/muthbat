@@ -1,3 +1,4 @@
+import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -86,7 +87,7 @@ class _DisputeDetailScreenState extends ConsumerState<DisputeDetailScreen> {
       if (success) {
         await _loadMessages();
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
+        TopNotice.of(context).showSnackBar(
           const SnackBar(
             content: Text('تعذر إرسال الرسالة. تحقق من اتصالك.'),
             backgroundColor: AppColors.error,

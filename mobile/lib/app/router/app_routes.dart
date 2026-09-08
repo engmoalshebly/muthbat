@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../features/local_ledger/local_ledger_screen.dart';
 import '../../features/auth/presentation/screens/account_recovery_screen.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/auth/presentation/screens/otp_verification_screen.dart';
@@ -26,6 +27,7 @@ class AppRoutes {
 
   static const String splash = '/';
   static const String login = '/login';
+  static const String localLedger = '/local-ledger';
   static const String register = '/register';
   static const String otp = '/otp';
   static const String recovery = '/recovery';
@@ -50,6 +52,11 @@ class AppRoutes {
 
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
     switch (settings.name) {
+      case localLedger:
+        return MaterialPageRoute(
+          builder: (_) => const LocalLedgerScreen(),
+          settings: settings,
+        );
       case businessSetup:
         return MaterialPageRoute(
           builder: (_) => const BusinessSetupScreen(),

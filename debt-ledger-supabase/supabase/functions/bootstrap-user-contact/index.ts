@@ -19,6 +19,10 @@ Deno.serve(async (request) => {
   if (methodError) return methodError;
   try {
     const { user } = await requireUser(request);
+    if (user.app_metadata?.phone_verification_bypassed === true ||
+        Deno.env.get("ALLOW_STAGING_DIRECT_AUTH") === "true") {
+      return errorResponse(request, 403, "verified_phone_required", "Phone ownership verification is required before linking customer records.");
+    }
     // تُستدعى بعد أول تحقق OTP ناجح عبر Supabase Phone Auth (Twilio Verify):
     // ناشترط هاتفاً موثقاً فعلياً (phone_confirmed_at) لا مجرد حقل phone.
     if (!user.phone || !user.phone_confirmed_at) {
@@ -37,16 +41,18 @@ Deno.serve(async (request) => {
     if (!customer) {
       return errorResponse(request, 404, "customer_not_found", "No customer record is linked to this user.");
     }
-    const { error } = await admin.rpc("service_upsert_customer_contact", {
-      p_customer_id: customer.id,
+    const { data: claimedId, error } = await admin.rpc("service_claim_customer_phone", {
+      p_user_id: user.id,
       p_phone_hash: await phoneHash(phone),
       p_phone_ciphertext: await encryptPhone(phone),
       p_phone_last4: phone.slice(-4),
-      p_verified_at: new Date().toISOString(),
       p_key_version: phoneKeyVersion(),
     });
-    if (error) throw error;
-    return json(request, { customerId: customer.id, phoneLast4: phone.slice(-4) });
+    if (error) {
+      if (error.code === "23505") return errorResponse(request, 409, "phone_link_conflict", "This phone needs an account ownership review.");
+      throw error;
+    }
+    return json(request, { customerId: claimedId, phoneLast4: phone.slice(-4) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown_error";
     if (message === "unauthorized") return errorResponse(request, 401, "unauthorized", "Authentication is required.");

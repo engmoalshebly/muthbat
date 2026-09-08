@@ -1,3 +1,4 @@
+import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -38,7 +39,7 @@ class _CurrencySettingsScreenState
         .updateCurrencies(_selected.toList());
     if (!mounted) return;
     if (ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      TopNotice.of(context).showSnackBar(
         const SnackBar(content: Text('تم تحديث العملات المفعلة بنجاح.')),
       );
       Navigator.pop(context);
@@ -46,7 +47,7 @@ class _CurrencySettingsScreenState
       final error =
           ref.read(merchantControllerProvider).lastError ??
           'تعذر تحديث العملات.';
-      ScaffoldMessenger.of(context).showSnackBar(
+      TopNotice.of(context).showSnackBar(
         SnackBar(content: Text(error), backgroundColor: AppColors.error),
       );
     }

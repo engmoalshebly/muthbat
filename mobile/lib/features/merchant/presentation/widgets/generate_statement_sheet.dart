@@ -1,3 +1,4 @@
+import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -97,7 +98,7 @@ class _GenerateStatementSheetState
           arguments: {'statement': stmt, 'customer': widget.customer},
         );
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
+        TopNotice.of(context).showSnackBar(
           const SnackBar(
             content: Text(
               'تعذر إنشاء كشف الحساب. تحقق من الاتصال وحاول مرة أخرى.',

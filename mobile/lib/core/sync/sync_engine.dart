@@ -176,6 +176,18 @@ class SyncEngine {
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   Timer? _periodicTimer;
   bool _isProcessing = false;
+  bool _paused = false;
+  Completer<void>? _drained;
+
+  Future<void> pauseAndDrain() async {
+    _paused = true;
+    await _drained?.future;
+  }
+
+  void resume() {
+    _paused = false;
+  }
+
   DateTime? _lastSyncAt;
 
   /// بدء الاستماع لشبكة الإنترنت والمزامنة الدورية
@@ -206,6 +218,7 @@ class SyncEngine {
   }
 
   void _notify(SyncState state, [String? message]) async {
+    if (AppDatabase.instance.accountId == null) return;
     final counts = await AppDatabase.instance.getMutationStatusCounts();
     _progressController.add(
       SyncProgress(
@@ -224,8 +237,13 @@ class SyncEngine {
 
   /// تشغيل المزامنة اليدوية أو التلقائية
   Future<void> triggerSync() async {
-    if (_isProcessing) return;
+    if (_isProcessing || _paused) return;
+    if (Supabase.instance.client.auth.currentSession == null || Supabase.instance.client.auth.currentSession!.isExpired) return;
+    if (AppDatabase.instance.accountId !=
+        Supabase.instance.client.auth.currentUser?.id)
+      return;
     _isProcessing = true;
+    _drained = Completer<void>();
 
     try {
       final connectivity = await Connectivity().checkConnectivity();
@@ -263,6 +281,8 @@ class SyncEngine {
       _notify(SyncState.error, 'تعذرت المزامنة: $e');
     } finally {
       _isProcessing = false;
+      _drained?.complete();
+      _drained = null;
     }
   }
 
@@ -482,18 +502,9 @@ class SyncEngine {
 
     if (commandType == 'create_business') {
       if (serverEntityId != null && localRefId != null) {
-        final dbInstance = await db.database;
-        await dbInstance.rawUpdate(
-          'UPDATE local_businesses SET id = ? WHERE id = ?',
-          [serverEntityId, localRefId],
-        );
-        await dbInstance.rawUpdate(
-          'UPDATE local_business_customers SET business_id = ? WHERE business_id = ?',
-          [serverEntityId, localRefId],
-        );
-        await dbInstance.rawUpdate(
-          'UPDATE local_ledger_entries SET business_id = ? WHERE business_id = ?',
-          [serverEntityId, localRefId],
+        await db.reconcileBusinessId(
+          localId: localRefId,
+          serverId: serverEntityId,
         );
       }
     } else if (commandType == 'add_business_customer' ||

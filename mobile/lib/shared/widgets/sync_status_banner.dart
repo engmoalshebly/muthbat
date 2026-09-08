@@ -41,7 +41,9 @@ class SyncStatusBanner extends StatelessWidget {
             bgColor = AppColors.warningLight;
             fgColor = AppColors.warning;
             icon = Icons.cloud_off_rounded;
-            text = progress.lastMessage ?? 'لا يوجد اتصال بالإنترنت — البيانات الجديدة غير موثقة بعد';
+            text =
+                progress.lastMessage ??
+                'لا يوجد اتصال بالإنترنت — البيانات الجديدة غير موثقة بعد';
             break;
           case SyncState.error:
             bgColor = AppColors.errorLight;
@@ -55,7 +57,8 @@ class SyncStatusBanner extends StatelessWidget {
               bgColor = AppColors.warningLight;
               fgColor = AppColors.warning;
               icon = Icons.hourglass_top_rounded;
-              text = '$pending عملية بانتظار المزامنة — الأرصدة المتأثرة غير موثقة بعد';
+              text =
+                  '$pending عملية بانتظار المزامنة — الأرصدة المتأثرة غير موثقة بعد';
               onTap = onReviewTap ?? () => SyncEngine.instance.triggerSync();
             } else {
               bgColor = AppColors.successLight;
@@ -65,12 +68,12 @@ class SyncStatusBanner extends StatelessWidget {
             }
             break;
           case SyncState.idle:
-          default:
             if (pending > 0) {
               bgColor = AppColors.warningLight;
               fgColor = AppColors.warning;
               icon = Icons.hourglass_top_rounded;
-              text = '$pending عملية بانتظار المزامنة — الأرصدة المتأثرة غير موثقة بعد';
+              text =
+                  '$pending عملية بانتظار المزامنة — الأرصدة المتأثرة غير موثقة بعد';
               onTap = onReviewTap ?? () => SyncEngine.instance.triggerSync();
             } else {
               return const SizedBox.shrink();
@@ -90,7 +93,10 @@ class SyncStatusBanner extends StatelessWidget {
                     SizedBox(
                       width: 14,
                       height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: fgColor),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: fgColor,
+                      ),
                     )
                   else
                     Icon(icon, size: 15, color: fgColor),
@@ -98,7 +104,11 @@ class SyncStatusBanner extends StatelessWidget {
                   Expanded(
                     child: Text(
                       text,
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: fgColor),
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: fgColor,
+                      ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),

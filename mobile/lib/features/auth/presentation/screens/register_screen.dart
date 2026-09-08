@@ -1,3 +1,4 @@
+import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -81,7 +82,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     }
 
     if (!_agreedToTerms) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      TopNotice.of(context).showSnackBar(
         const SnackBar(
           content: Text('يجب الموافقة على شروط الاستخدام للمتابعة'),
           backgroundColor: AppColors.error,
@@ -134,7 +135,14 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
         );
 
     if (success && mounted) {
-      Navigator.pushNamed(context, AppRoutes.otp);
+      final authState = ref.read(authControllerProvider);
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        authState.requiresBusinessSetup
+            ? AppRoutes.businessSetup
+            : AppRoutes.merchantHome,
+        (route) => false,
+      );
     }
   }
 

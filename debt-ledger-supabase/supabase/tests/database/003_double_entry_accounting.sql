@@ -15,7 +15,7 @@ select set_config('test.business_id',public.create_business('Accounting Store','
 
 select is(
   (select count(*)::integer from public.chart_of_accounts where business_id=current_setting('test.business_id')::uuid),
-  5, 'Creating a business initializes its five required system accounts'
+  6, 'Creating a business initializes its six required system accounts'
 );
 select is(
   (select account_code from public.chart_of_accounts where business_id=current_setting('test.business_id')::uuid and is_control_account),
@@ -28,9 +28,9 @@ select set_config('request.jwt.claim.sub','92222222-2222-2222-2222-222222222222'
 select public.respond_link_request(current_setting('test.link_request_id')::uuid,true);
 
 select set_config('request.jwt.claim.sub','91111111-1111-1111-1111-111111111111',true);
-select set_config('test.debt_id',public.create_ledger_entry(current_setting('test.business_customer_id')::uuid,'debt',200,'Accounting invoice',now(),null,null,'94444444-4444-4444-4444-444444444444')::text,true);
+select set_config('test.debt_id',public.create_ledger_entry(p_business_customer_id := current_setting('test.business_customer_id')::uuid,p_entry_type := 'debt',p_amount := 200,p_description := 'Accounting invoice',p_occurred_at := now(),p_client_request_id := '94444444-4444-4444-4444-444444444444'::uuid)::text,true);
 select set_config('test.discount_id',public.apply_customer_discount(current_setting('test.business_customer_id')::uuid,20,'Approved settlement discount',now(),'95555555-5555-5555-5555-555555555555')::text,true);
-select set_config('test.payment_id',public.create_ledger_entry(current_setting('test.business_customer_id')::uuid,'payment',230,'Advance-inclusive payment',now(),null,null,'96666666-6666-6666-6666-666666666666')::text,true);
+select set_config('test.payment_id',public.create_ledger_entry(p_business_customer_id := current_setting('test.business_customer_id')::uuid,p_entry_type := 'payment',p_amount := 230,p_description := 'Advance-inclusive payment',p_occurred_at := now(),p_client_request_id := '96666666-6666-6666-6666-666666666666'::uuid)::text,true);
 
 select is(
   (select count(*)::integer from public.journal_entries where business_id=current_setting('test.business_id')::uuid and source_type='ledger_entry'),

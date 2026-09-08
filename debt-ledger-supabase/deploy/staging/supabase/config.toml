@@ -1,0 +1,20 @@
+project_id = "muthbat-staging"
+
+[auth]
+site_url = "debtledger://login-callback"
+additional_redirect_urls = ["debtledger://login-callback"]
+jwt_expiry = 900
+enable_signup = false
+enable_anonymous_sign_ins = false
+minimum_password_length = 8
+
+[auth.email]
+enabled = false
+enable_signup = false
+
+# Direct account creation is performed only by staging-direct-signup using the
+# service role. Enabling the phone provider here allows the resulting confirmed
+# user to obtain a normal password session without configuring SMS/OpenWA.
+[auth.sms]
+enable_signup = true
+enable_confirmations = true

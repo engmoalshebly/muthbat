@@ -1,3 +1,4 @@
+import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -380,7 +381,7 @@ class MerchantProfileScreen extends ConsumerWidget {
                               extension: image.name.split('.').last,
                             );
                         if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
+                        TopNotice.of(context).showSnackBar(
                           SnackBar(
                             content: Text(
                               ok
@@ -410,7 +411,7 @@ class MerchantProfileScreen extends ConsumerWidget {
                         ),
                       ),
                       onTap: () async {
-                        ScaffoldMessenger.of(context).showSnackBar(
+                        TopNotice.of(context).showSnackBar(
                           const SnackBar(
                             content: Text('جاري مزامنة البيانات...'),
                           ),
@@ -422,7 +423,7 @@ class MerchantProfileScreen extends ConsumerWidget {
                         final error = ref
                             .read(merchantControllerProvider)
                             .lastError;
-                        ScaffoldMessenger.of(context)
+                        TopNotice.of(context)
                           ..hideCurrentSnackBar()
                           ..showSnackBar(
                             SnackBar(
@@ -450,6 +451,14 @@ class MerchantProfileScreen extends ConsumerWidget {
                         context,
                         AppRoutes.currencySettings,
                       ),
+                    ),
+                    _buildSettingsDivider(),
+                    _buildSettingsItem(
+                      icon: AppIcons.lock,
+                      label: 'حساباتي كزبون',
+                      color: AppColors.primary,
+                      onTap: () =>
+                          Navigator.pushNamed(context, AppRoutes.customerHome),
                     ),
                     _buildSettingsDivider(),
                     _buildSettingsItem(
@@ -780,7 +789,7 @@ class MerchantProfileScreen extends ConsumerWidget {
               onPressed: () async {
                 await Clipboard.setData(ClipboardData(text: diagnostics));
                 if (!sheetContext.mounted) return;
-                ScaffoldMessenger.of(sheetContext).showSnackBar(
+                TopNotice.of(sheetContext).showSnackBar(
                   const SnackBar(content: Text('تم نسخ معلومات التشخيص.')),
                 );
               },

@@ -5,16 +5,24 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'app/app.dart';
 import 'app/theme/app_colors.dart';
 import 'core/config/supabase_config.dart';
-import 'core/database/app_database.dart';
 import 'core/sync/sync_engine.dart';
+import 'features/local_ledger/local_ledger_store.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   try {
-    // 1. تهيئة الإعدادات وقاعدة البيانات المحلية
+    await LocalLedgerStore.instance.database;
+  } catch (e) {
+    runApp(
+      _BootstrapErrorApp(message: 'تعذر فتح التخزين المحلي. لم تُحذف بياناتك.'),
+    );
+    return;
+  }
+
+  try {
+    // Cloud failure must not prevent opening the independent local notebook.
     await SupabaseConfig.init();
-    await AppDatabase.instance.database;
 
     // 2. تهيئة عميل Supabase
     await Supabase.initialize(
@@ -24,14 +32,13 @@ void main() async {
         authFlowType: AuthFlowType.pkce,
       ),
     );
+    SupabaseConfig.cloudReady = true;
   } catch (e) {
     debugPrint('[Main] Bootstrap failed: $e');
-    runApp(_BootstrapErrorApp(message: e.toString()));
-    return;
   }
 
   // 3. تشغيل محرك المزامنة الخلفي
-  SyncEngine.instance.init();
+  if (SupabaseConfig.cloudReady) SyncEngine.instance.init();
 
   // ضبط شريط الحالة الافتراضي للواجهة
   SystemChrome.setSystemUIOverlayStyle(

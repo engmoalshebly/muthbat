@@ -1,3 +1,4 @@
+import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -59,7 +60,7 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
       setState(() => _isSubmitting = false);
       if (success) {
         Navigator.pop(context, true);
-        ScaffoldMessenger.of(context).showSnackBar(
+        TopNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               _selectedResolution == 'accepted'
@@ -75,7 +76,7 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
           ),
         );
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
+        TopNotice.of(context).showSnackBar(
           const SnackBar(
             content: Text(
               'حدث خطأ أثناء معالجة الاعتراض. يرجى المحاولة مرة أخرى.',

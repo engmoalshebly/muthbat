@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide AuthState;
 
 import '../../../../core/database/app_database.dart';
+import '../../../../core/config/env.dart';
 import '../../../../core/sync/sync_engine.dart';
 import '../validators/auth_validators.dart';
 
@@ -127,6 +128,30 @@ class AuthController extends StateNotifier<AuthState> {
 
   // نوع الحدث الخام هو AuthState الخاصة بـ supabase_flutter (مخفية عن الاستيراد).
   StreamSubscription<dynamic>? _authEventSubscription;
+  bool _explicitSignOut = false;
+
+  Future<bool> _restoreLocalOwner() async {
+    final business = await AppDatabase.instance.restoreRememberedOwner();
+    if (business == null) {
+      final profile = await AppDatabase.instance.restoreRememberedCustomer();
+      if (profile == null) return false;
+      state = AuthState(
+        status: AuthStatus.authenticated,
+        userId: AppDatabase.instance.accountId,
+        userType: 'customer',
+        displayName: profile['display_name'] as String?,
+        phoneNumber: profile['phone'] as String?,
+      );
+      return true;
+    }
+    state = AuthState(
+      status: AuthStatus.authenticated,
+      userId: AppDatabase.instance.accountId,
+      userType: 'merchant',
+      displayName: business['name'] as String?,
+    );
+    return true;
+  }
 
   // ---------------------------------------------------------------------------
   // استعادة الجلسة (§3.4) — من Supabase SDK فقط، لا SharedPreferences
@@ -134,16 +159,20 @@ class AuthController extends StateNotifier<AuthState> {
 
   Future<void> _initFromSupabaseSession() async {
     try {
+      final localOwner = await _restoreLocalOwner();
       // اشتراك دائم بأحداث المصادقة: خروج/تحديث توكن يعكسان على الحالة فوراً.
       _authEventSubscription = _auth.onAuthStateChange.listen((data) async {
         final event = data.event;
         if (event == AuthChangeEvent.signedOut) {
-          state = state.copyWith(status: AuthStatus.unauthenticated);
+          if (_explicitSignOut || !await _restoreLocalOwner()) {
+            state = state.copyWith(status: AuthStatus.unauthenticated);
+          }
         } else if (event == AuthChangeEvent.tokenRefreshed ||
             event == AuthChangeEvent.signedIn) {
           final session = data.session;
           if (session != null &&
-              state.status != AuthStatus.authenticated &&
+              (state.status != AuthStatus.authenticated ||
+                  session.user.id != state.userId) &&
               state.status != AuthStatus.loading) {
             state = state.copyWith(status: AuthStatus.loading);
             await _loadProfile();
@@ -152,6 +181,17 @@ class AuthController extends StateNotifier<AuthState> {
       });
 
       var session = _auth.currentSession;
+      if (localOwner) {
+        // Open immediately from disk. The SDK refreshes online independently.
+        // A different account must complete its explicit sign-in before use.
+        if (session == null || session.user.id == state.userId) {
+          if (session != null && !session.isExpired) {
+            SyncEngine.instance.triggerSync();
+          }
+          return;
+        }
+      }
+      final persistedSession = session;
       if (session?.isExpired == true) {
         try {
           session = (await _auth.refreshSession().timeout(
@@ -159,6 +199,28 @@ class AuthController extends StateNotifier<AuthState> {
           )).session;
         } catch (e) {
           debugPrint('[AuthController] persisted session refresh failed: $e');
+          // Only an established owner can keep using their own cached notebook
+          // after a transient network failure. Revoked credentials and employee
+          // sessions do not acquire an offline owner identity.
+          if (persistedSession != null &&
+              (e is SocketException || e is TimeoutException)) {
+            await AppDatabase.instance.bindAccount(persistedSession.user.id);
+            final business = await AppDatabase.instance.getBusinessByOwnerId(
+              persistedSession.user.id,
+            );
+            if (business != null) {
+              state = AuthState(
+                status: AuthStatus.authenticated,
+                userId: persistedSession.user.id,
+                phoneNumber: persistedSession.user.phone,
+                userType: 'merchant',
+                displayName: business['name'] as String?,
+                errorMessage:
+                    'أعد تسجيل الدخول لاستكمال المزامنة. العمل المحلي متاح.',
+              );
+              return;
+            }
+          }
           session = null;
         }
       }
@@ -180,7 +242,9 @@ class AuthController extends StateNotifier<AuthState> {
       }
     } catch (e) {
       debugPrint('[AuthController] Supabase session initialization failed: $e');
-      state = state.copyWith(status: AuthStatus.unauthenticated);
+      if (state.status != AuthStatus.authenticated) {
+        state = state.copyWith(status: AuthStatus.unauthenticated);
+      }
     }
   }
 
@@ -215,10 +279,20 @@ class AuthController extends StateNotifier<AuthState> {
         return false;
       }
       final normalizedPhone = AuthValidators.normalizeE164(phone);
-      final res = await Supabase.instance.client.functions.invoke(
-        'send-whatsapp-otp',
-        body: {'phone': normalizedPhone, 'appName': 'Muthbat'},
-      );
+      if (EnvConfig.isStaging) {
+        return _registerDirectlyForStaging(
+          name: name,
+          phone: normalizedPhone,
+          password: password,
+          userType: userType,
+        );
+      }
+      final res = await Supabase.instance.client.functions
+          .invoke(
+            'send-whatsapp-otp',
+            body: {'phone': normalizedPhone, 'appName': 'Muthbat'},
+          )
+          .timeout(const Duration(seconds: 25));
 
       final data = res.data is Map
           ? Map<String, dynamic>.from(res.data as Map)
@@ -260,6 +334,47 @@ class AuthController extends StateNotifier<AuthState> {
       );
       return false;
     }
+  }
+
+  /// Closed-beta fallback while the WhatsApp gateway is intentionally off.
+  /// The Edge Function is fail-closed unless staging enables it explicitly.
+  Future<bool> _registerDirectlyForStaging({
+    required String name,
+    required String phone,
+    required String password,
+    required String userType,
+  }) async {
+    final res = await Supabase.instance.client.functions
+        .invoke(
+          'staging-direct-signup',
+          body: {
+            'phone': phone,
+            'password': password,
+            'displayName': name.trim(),
+            'userType': userType,
+          },
+        )
+        .timeout(const Duration(seconds: 25));
+    final data = res.data is Map
+        ? Map<String, dynamic>.from(res.data as Map)
+        : null;
+    if (data?['success'] != true) {
+      final error = data?['error'];
+      final message = error is Map ? error['message'] : null;
+      throw AuthException(
+        (message ?? 'تعذر إنشاء الحساب التجريبي.').toString(),
+      );
+    }
+
+    await _signInWithPhoneOrEmail(phone, password);
+    await _bootstrapUserContact();
+    await _loadProfile();
+    state = state.copyWith(
+      status: AuthStatus.authenticated,
+      clearPendingAction: true,
+    );
+    SyncEngine.instance.triggerSync();
+    return true;
   }
 
   /// التحقق من رمز تسجيل جديد وتفعيل جلسة Supabase الحقيقية.
@@ -359,7 +474,18 @@ class AuthController extends StateNotifier<AuthState> {
     String password,
   ) async {
     final e164 = AuthValidators.normalizeE164(phone);
-    return _auth.signInWithPassword(phone: e164, password: password);
+    await SyncEngine.instance.pauseAndDrain();
+    try {
+      final response = await _auth
+          .signInWithPassword(phone: e164, password: password)
+          .timeout(const Duration(seconds: 25));
+      if (response.user != null) {
+        await AppDatabase.instance.bindAccount(response.user!.id);
+      }
+      return response;
+    } finally {
+      SyncEngine.instance.resume();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -606,34 +732,41 @@ class AuthController extends StateNotifier<AuthState> {
   ///   مع discardPendingData: true.
   Future<SignOutResult> signOut({bool discardPendingData = false}) async {
     try {
-      var pending = await AppDatabase.instance.getPendingMutationsCount();
-      if (pending > 0 && !discardPendingData) {
-        // محاولة «مزامنة الآن» قبل إجهاض الخروج.
-        await SyncEngine.instance.triggerSync();
-        pending = await AppDatabase.instance.getPendingMutationsCount();
-        if (pending > 0) {
-          return SignOutResult(signedOut: false, pendingCount: pending);
-        }
-      }
-
-      await _auth.signOut();
-
-      // مسح SQLite المحلي فقط عندما يكون آمناً (طابور فارغ) أو مؤكداً من المستخدم.
-      await AppDatabase.instance.clearAll();
+      _explicitSignOut = true;
+      await SyncEngine.instance.pauseAndDrain();
+      await AppDatabase.instance.forgetRememberedOwner();
+      await _auth.signOut(scope: SignOutScope.local);
+      await AppDatabase.instance.lockAccount();
 
       state = const AuthState(status: AuthStatus.unauthenticated);
       return const SignOutResult(signedOut: true);
     } catch (e) {
       debugPrint('[AuthController] signOut error: $e');
-      // لا نترك بيانات الحساب ظاهرة على جهاز مشترك إن تعذر إبطال الجلسة عن بعد.
-      await AppDatabase.instance.clearAll(allowWithPendingQueue: true);
-      state = const AuthState(status: AuthStatus.unauthenticated);
-      return const SignOutResult(signedOut: true);
+      // فشل الخروج أو المسح لا يمنح إذناً بحذف العمليات غير المزامنة.
+      // لا نعلن نجاح الخروج إذا لم تكتمل خطواته.
+      state = state.copyWith(
+        errorMessage:
+            'تعذر إكمال تسجيل الخروج. احتُفظ بالبيانات المحلية؛ حاول مجدداً.',
+      );
+      return const SignOutResult(signedOut: false);
+    } finally {
+      _explicitSignOut = false;
+      SyncEngine.instance.resume();
     }
   }
 
   void reset() {
     state = const AuthState(status: AuthStatus.unauthenticated);
+  }
+
+  /// Only cached ownership determines local workspace availability; this is
+  /// not a server role grant or a change to the customer's personal identity.
+  Future<void> refreshLocalBusinessAccess() async {
+    final owner = state.userId;
+    if (owner == null || AppDatabase.instance.accountId != owner) return;
+    final business = await AppDatabase.instance.getBusinessByOwnerId(owner);
+    if (!mounted || state.userId != owner || business == null) return;
+    state = state.copyWith(userType: 'merchant', requiresBusinessSetup: false);
   }
 
   // ---------------------------------------------------------------------------
@@ -644,6 +777,15 @@ class AuthController extends StateNotifier<AuthState> {
   Future<void> _loadProfile() async {
     final user = _auth.currentUser;
     if (user == null) return;
+    await AppDatabase.instance.forgetRememberedOwner();
+    if (AppDatabase.instance.accountId != user.id) {
+      await SyncEngine.instance.pauseAndDrain();
+      try {
+        await AppDatabase.instance.bindAccount(user.id);
+      } finally {
+        SyncEngine.instance.resume();
+      }
+    }
 
     String? displayName = user.userMetadata?['display_name'] as String?;
     String userType =
@@ -669,6 +811,7 @@ class AuthController extends StateNotifier<AuthState> {
           'phone': user.phone ?? state.phoneNumber,
           'updated_at': now,
         });
+        await AppDatabase.instance.rememberCustomer();
       }
     } catch (e) {
       debugPrint(
@@ -686,6 +829,26 @@ class AuthController extends StateNotifier<AuthState> {
       userType = (user.userMetadata?['user_type'] as String?) ?? userType;
     }
 
+    // Business ownership, checked under the user's RLS session, enables the
+    // merchant workspace even if the account originally registered as customer.
+    try {
+      final owned = await Supabase.instance.client
+          .from('businesses')
+          .select('id')
+          .eq('owner_user_id', user.id)
+          .eq('status', 'active')
+          .limit(1)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 8));
+      if (owned != null) userType = 'merchant';
+    } catch (_) {
+      if (await AppDatabase.instance.getBusinessByOwnerId(user.id) != null) {
+        userType = 'merchant';
+      }
+    }
+
+    await AppDatabase.instance.rememberCustomer();
+    await AppDatabase.instance.rememberOwner();
     final requiresBusinessSetup = await _resolveBusinessSetupRequirement(
       user.id,
       userType,
@@ -728,7 +891,9 @@ class AuthController extends StateNotifier<AuthState> {
   /// idempotent من جهة الخادم — الفشل هنا لا يمنع الدخول ويُعاد عند الدخول التالي.
   Future<void> _bootstrapUserContact() async {
     try {
-      await Supabase.instance.client.functions.invoke('bootstrap-user-contact');
+      await Supabase.instance.client.functions
+          .invoke('bootstrap-user-contact')
+          .timeout(const Duration(seconds: 8));
     } catch (e) {
       debugPrint('[AuthController] bootstrap-user-contact deferred: $e');
     }
@@ -768,8 +933,17 @@ class AuthController extends StateNotifier<AuthState> {
           ? '${details['error'] ?? details['message'] ?? details}'
           : '$details';
       final message = '${e.reasonPhrase ?? ''} $detailsText'.toLowerCase();
+      if (e.status == 409 || message.contains('account_exists')) {
+        return 'هذا الرقم مسجل مسبقًا. اختر «تسجيل الدخول» بدل إنشاء حساب.';
+      }
+      if (e.status == 403 || message.contains('direct_auth_disabled')) {
+        return 'التسجيل المباشر غير مفعّل لهذه البيئة.';
+      }
+      if (e.status == 422 && message.contains('invalid_phone')) {
+        return 'رقم الهاتف غير صالح. أدخله مع رمز الدولة.';
+      }
       if (e.status == 429 || message.contains('rate_limited')) {
-        return 'تم طلب عدة رموز. انتظر 60 ثانية ثم حاول مرة أخرى.';
+        return 'محاولات كثيرة جدًا. انتظر قليلًا ثم حاول مرة أخرى.';
       }
       if (e.status == 502 || message.contains('otp_delivery_failed')) {
         return 'تعذر تأكيد تسليم رسالة واتساب. حاول مرة أخرى بعد 60 ثانية.';

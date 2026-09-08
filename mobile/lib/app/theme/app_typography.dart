@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+
 import 'app_colors.dart';
 
 /// نظام الخطوط والطباعة المعياري لتطبيق «مُثبَت | MUTHBAT»
@@ -7,13 +7,14 @@ class AppTypography {
   AppTypography._();
 
   // الخط العربي الأساسي المعتمد للعلامة والواجهات
-  static String get arabicFontFamily => GoogleFonts.tajawal().fontFamily ?? 'Tajawal';
+  static String get arabicFontFamily => 'Tajawal';
   // الخط الإنجليزي والأرقام
-  static String get latinFontFamily => GoogleFonts.manrope().fontFamily ?? 'Manrope';
+  static String get latinFontFamily => 'Tajawal';
 
   /// العناوين الكبرى والشاشات الرئيسية
   static TextStyle displayLarge({Color color = AppColors.textPrimary}) =>
-      GoogleFonts.tajawal(
+      TextStyle(
+        fontFamily: 'Tajawal',
         fontSize: 32,
         fontWeight: FontWeight.w800,
         color: color,
@@ -21,7 +22,8 @@ class AppTypography {
       );
 
   static TextStyle displayMedium({Color color = AppColors.textPrimary}) =>
-      GoogleFonts.tajawal(
+      TextStyle(
+        fontFamily: 'Tajawal',
         fontSize: 26,
         fontWeight: FontWeight.w700,
         color: color,
@@ -40,7 +42,8 @@ class AppTypography {
 
   /// عناوين البطاقات والأقسام
   static TextStyle titleLarge({Color color = AppColors.textPrimary}) =>
-      GoogleFonts.tajawal(
+      TextStyle(
+        fontFamily: 'Tajawal',
         fontSize: 20,
         fontWeight: FontWeight.w700,
         color: color,
@@ -48,7 +51,8 @@ class AppTypography {
       );
 
   static TextStyle titleMedium({Color color = AppColors.textPrimary}) =>
-      GoogleFonts.tajawal(
+      TextStyle(
+        fontFamily: 'Tajawal',
         fontSize: 16,
         fontWeight: FontWeight.w600,
         color: color,
@@ -56,7 +60,8 @@ class AppTypography {
       );
 
   static TextStyle titleSmall({Color color = AppColors.textSecondary}) =>
-      GoogleFonts.tajawal(
+      TextStyle(
+        fontFamily: 'Tajawal',
         fontSize: 14,
         fontWeight: FontWeight.w600,
         color: color,
@@ -65,7 +70,8 @@ class AppTypography {
 
   /// نصوص المحتوى وجسم الواجهة (Body)
   static TextStyle bodyLarge({Color color = AppColors.textPrimary}) =>
-      GoogleFonts.tajawal(
+      TextStyle(
+        fontFamily: 'Tajawal',
         fontSize: 15,
         fontWeight: FontWeight.w500,
         color: color,
@@ -73,52 +79,55 @@ class AppTypography {
       );
 
   static TextStyle bodyMedium({Color color = AppColors.textSecondary}) =>
-      GoogleFonts.tajawal(
+      TextStyle(
+        fontFamily: 'Tajawal',
         fontSize: 13,
         fontWeight: FontWeight.w400,
         color: color,
         height: 1.5,
       );
 
-  static TextStyle bodySmall({Color color = AppColors.textMuted}) =>
-      GoogleFonts.tajawal(
-        fontSize: 11.5,
-        fontWeight: FontWeight.w400,
-        color: color,
-        height: 1.4,
-      );
+  static TextStyle bodySmall({Color color = AppColors.textMuted}) => TextStyle(
+    fontFamily: 'Tajawal',
+    fontSize: 11.5,
+    fontWeight: FontWeight.w400,
+    color: color,
+    height: 1.4,
+  );
 
-  static TextStyle caption({Color color = AppColors.textSecondary}) => bodySmall(color: color);
+  static TextStyle caption({Color color = AppColors.textSecondary}) =>
+      bodySmall(color: color);
 
   /// الأرقام والمبالغ المالية (Financial Currency Typography)
   static TextStyle financialAmount({
     Color color = AppColors.textPrimary,
     double fontSize = 24,
     FontWeight fontWeight = FontWeight.w800,
-  }) =>
-      GoogleFonts.manrope(
-        fontSize: fontSize,
-        fontWeight: fontWeight,
-        color: color,
-        letterSpacing: -0.5,
-      );
+  }) => TextStyle(
+    fontFamily: 'Tajawal',
+    fontSize: fontSize,
+    fontWeight: fontWeight,
+    color: color,
+    letterSpacing: -0.5,
+  );
 
   /// الكلمات الإنجليزية والوسوم (English Wordmark)
   static TextStyle englishWordmark({
     Color color = AppColors.secondaryLight,
     double fontSize = 12,
     double letterSpacing = 4.0,
-  }) =>
-      GoogleFonts.manrope(
-        fontSize: fontSize,
-        fontWeight: FontWeight.w800,
-        letterSpacing: letterSpacing,
-        color: color,
-      );
+  }) => TextStyle(
+    fontFamily: 'Tajawal',
+    fontSize: fontSize,
+    fontWeight: FontWeight.w800,
+    letterSpacing: letterSpacing,
+    color: color,
+  );
 
   /// الشعار التسويقي (Tagline)
   static TextStyle tagline({Color color = AppColors.textSecondary}) =>
-      GoogleFonts.tajawal(
+      TextStyle(
+        fontFamily: 'Tajawal',
         fontSize: 13,
         fontWeight: FontWeight.w600,
         letterSpacing: 0.3,

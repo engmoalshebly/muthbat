@@ -29,7 +29,7 @@ select public.respond_link_request(current_setting('test.link_req_a')::uuid, tru
 
 -- Tenant A creates an entry
 select set_config('request.jwt.claim.sub','91111111-1111-1111-1111-111111111111',true);
-select set_config('test.entry_a', public.create_ledger_entry(current_setting('test.bc_a')::uuid, 'debt', 250, 'Secret Sale A', now(), current_date + 7, null, '95555555-5555-5555-5555-555555555555')::text, true);
+select set_config('test.entry_a', public.create_ledger_entry(p_business_customer_id := current_setting('test.bc_a')::uuid,p_entry_type := 'debt',p_amount := 250,p_description := 'Secret Sale A',p_occurred_at := now(),p_due_date := current_date + 7,p_client_request_id := '95555555-5555-5555-5555-555555555555'::uuid)::text, true);
 
 -- 2. Setup Tenant B
 select set_config('request.jwt.claim.sub','92222222-2222-2222-2222-222222222222',true);
@@ -55,7 +55,7 @@ select is(
 
 -- Test 3: Merchant B cannot create a ledger entry on Merchant A's customer
 select throws_ok(
-  format('select public.create_ledger_entry(''%s''::uuid, ''debt'', 100, ''Unauthorized Debt'', now(), null, null, ''96666666-6666-6666-6666-666666666666''::uuid)', current_setting('test.bc_a')),
+  format('select public.create_ledger_entry(p_business_customer_id := ''%s''::uuid,p_entry_type := ''debt'',p_amount := 100,p_description := ''Unauthorized Debt'',p_occurred_at := now(),p_client_request_id := ''96666666-6666-6666-6666-666666666666''::uuid)', current_setting('test.bc_a')),
   '42501',
   null,
   'Merchant B cannot create ledger entry on Tenant A customer (42501)'

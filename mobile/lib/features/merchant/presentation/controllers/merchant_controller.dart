@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../../../local_ledger/local_ledger_store.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -168,7 +169,7 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
     try {
       // مصدر الحقيقة الوحيد — جلسة Supabase الحية (لا cached_user_id)
       final currentUserId =
-          userId ?? Supabase.instance.client.auth.currentUser?.id;
+          userId ?? AppDatabase.instance.accountId;
 
       if (currentUserId == null || currentUserId.isEmpty) {
         state = state.copyWith(
@@ -180,19 +181,30 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
 
       // البحث عن محل حقيقي مرتبط بالمستخدم (من المزامنة/الباكند)
       Map<String, dynamic>? activeBiz;
+      final notebook = await LocalLedgerStore.instance.current();
+      String? preferredBusiness;
+      if (notebook != null && notebook['transfer_state'] == 'complete' && notebook['owner_id'] == currentUserId) {
+        preferredBusiness = notebook['server_business_id'] as String?;
+      }
       activeBiz = await AppDatabase.instance.getBusinessByOwnerId(
         currentUserId,
       );
-      activeBiz ??= await AppDatabase.instance.getActiveBusiness(currentUserId);
+      if (preferredBusiness != null && activeBiz?['id'] != preferredBusiness) {
+        final db = await AppDatabase.instance.database;
+        final matches = await db.query('local_businesses', where: 'id = ? AND owner_user_id = ?', whereArgs: [preferredBusiness, currentUserId]);
+        activeBiz = matches.isEmpty ? null : matches.first;
+      }
+      if (preferredBusiness == null) activeBiz ??= await AppDatabase.instance.getActiveBusiness(currentUserId);
 
       // إذا لم يوجد في الكاش المحلي، نقوم بجلبه من Supabase مباشرة
       if (activeBiz == null) {
         try {
-          final serverBiz = await Supabase.instance.client
+          var businessQuery = Supabase.instance.client
               .from('businesses')
               .select()
-              .eq('owner_user_id', currentUserId)
-              .maybeSingle();
+              .eq('owner_user_id', currentUserId);
+          if (preferredBusiness != null) businessQuery = businessQuery.eq('id', preferredBusiness);
+          final serverBiz = await businessQuery.limit(1).maybeSingle();
           if (serverBiz != null) {
             final localServerBiz = Map<String, dynamic>.from(serverBiz);
             final rawCurrencies = localServerBiz['additional_currencies'];

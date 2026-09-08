@@ -239,7 +239,7 @@ set local role authenticated;
 
 -- ---------- RLS on the derived balance table ----------
 select set_config('request.jwt.claim.sub','b4111111-1111-1111-1111-111111111111',true);
-perform public.create_business('Stranger Store','retail','YER');
+select public.create_business('Stranger Store','retail','YER');
 select is(
   (select count(*)::integer from public.customer_currency_balances where business_id=current_setting('test.biz')::uuid),
   0, 'MC-16: a member of another store cannot read this store currency balances');
@@ -259,7 +259,7 @@ select throws_ok(format(
 select throws_ok(format(
   'select public.create_ledger_entry(p_business_customer_id := %L::uuid, p_entry_type := ''debt'', p_amount := 5, p_category := ''Goods'', p_description := ''Bad category probe'', p_client_request_id := ''a4eeeeee-eeee-4eee-eeee-eeeeeeeeeeee''::uuid)',
   current_setting('test.bc')),
-  '22P02', null, 'MC-18: a category outside the enum (case-sensitive) is rejected');
+  '22023', null, 'MC-18: a category outside the enum (case-sensitive) is rejected');
 select lives_ok(format(
   'select public.create_ledger_entry(p_business_customer_id := %L::uuid, p_entry_type := ''debt'', p_amount := 5, p_category := ''service'', p_description := ''Service debt'', p_client_request_id := ''a4ffffff-ffff-4fff-ffff-ffffffffffff''::uuid)',
   current_setting('test.bc')),

@@ -1,18 +1,17 @@
+import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/theme/app_colors.dart';
 import '../../../../app/theme/app_typography.dart';
 import '../../../../shared/widgets/custom_button.dart';
+import '../../data/merchant_api_exception.dart';
 import '../controllers/merchant_controller.dart';
 
 /// نافذة دعوة موظف جديد للانضمام لفريق المحل (Invite Member Sheet)
 class InviteMemberSheet extends ConsumerStatefulWidget {
   final String businessId;
 
-  const InviteMemberSheet({
-    super.key,
-    required this.businessId,
-  });
+  const InviteMemberSheet({super.key, required this.businessId});
 
   @override
   ConsumerState<InviteMemberSheet> createState() => _InviteMemberSheetState();
@@ -20,13 +19,13 @@ class InviteMemberSheet extends ConsumerStatefulWidget {
 
 class _InviteMemberSheetState extends ConsumerState<InviteMemberSheet> {
   final _formKey = GlobalKey<FormState>();
-  final _userIdController = TextEditingController();
+  final _phoneController = TextEditingController();
   String _selectedRole = 'accountant'; // 'admin', 'accountant', 'collector'
   bool _isSubmitting = false;
 
   @override
   void dispose() {
-    _userIdController.dispose();
+    _phoneController.dispose();
     super.dispose();
   }
 
@@ -35,17 +34,25 @@ class _InviteMemberSheetState extends ConsumerState<InviteMemberSheet> {
 
     setState(() => _isSubmitting = true);
 
-    final success = await ref.read(merchantRepositoryProvider).inviteMember(
-      businessId: widget.businessId,
-      targetUserId: _userIdController.text.trim(),
-      role: _selectedRole,
-    );
+    var success = false;
+    String? failureMessage;
+    try {
+      success = await ref
+          .read(merchantRepositoryProvider)
+          .inviteMember(
+            businessId: widget.businessId,
+            phone: _phoneController.text.trim(),
+            role: _selectedRole,
+          );
+    } catch (error) {
+      failureMessage = MerchantApiException.from(error).message;
+    }
 
     if (mounted) {
       setState(() => _isSubmitting = false);
       if (success) {
         Navigator.pop(context, true);
-        ScaffoldMessenger.of(context).showSnackBar(
+        TopNotice.of(context).showSnackBar(
           const SnackBar(
             content: Text('تم إرسال دعوة الانضمام للموظف بنجاح'),
             backgroundColor: AppColors.success,
@@ -53,9 +60,11 @@ class _InviteMemberSheetState extends ConsumerState<InviteMemberSheet> {
           ),
         );
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تعذر إرسال الدعوة. تأكد من صحة معرف المستخدم.'),
+        TopNotice.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              failureMessage ?? 'تعذر إرسال الدعوة. تأكد من رقم هاتف الموظف.',
+            ),
             backgroundColor: AppColors.error,
             behavior: SnackBarBehavior.floating,
           ),
@@ -104,19 +113,23 @@ class _InviteMemberSheetState extends ConsumerState<InviteMemberSheet> {
               ),
               const SizedBox(height: 4),
               Text(
-                'أدخل المعرف الرقمي للمستخدم وحدد صلاحياته في المحل',
+                'أدخل رقم واتساب الموظف المسجل في مُثبَت وحدد صلاحياته',
                 style: AppTypography.caption(color: AppColors.textSecondary),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 20),
 
-              // حقل معرف المستخدم
+              // حقل هاتف الموظف؛ لا يُطلب UUID من صاحب البقالة.
               TextFormField(
-                controller: _userIdController,
+                controller: _phoneController,
+                keyboardType: TextInputType.phone,
                 decoration: InputDecoration(
-                  labelText: 'المعرف الرقمي للموظف (User ID) *',
-                  hintText: 'مثال: e4b2d184-3c87-4b11-b847-7945d820ef69',
-                  prefixIcon: const Icon(Icons.person_pin_rounded, color: AppColors.textSecondary),
+                  labelText: 'رقم هاتف الموظف *',
+                  hintText: 'مثال: 771234567 أو +967771234567',
+                  prefixIcon: const Icon(
+                    Icons.phone_android_rounded,
+                    color: AppColors.textSecondary,
+                  ),
                   filled: true,
                   fillColor: AppColors.backgroundLight,
                   border: OutlineInputBorder(
@@ -125,21 +138,28 @@ class _InviteMemberSheetState extends ConsumerState<InviteMemberSheet> {
                   ),
                 ),
                 validator: (val) {
-                  if (val == null || val.trim().isEmpty) return 'يرجى إدخال معرف المستخدم';
-                  if (val.trim().length < 8) return 'المعرف غير صالح';
+                  if (val == null || val.trim().isEmpty)
+                    return 'يرجى إدخال رقم هاتف الموظف';
+                  final digits = val.replaceAll(RegExp(r'[^0-9]'), '');
+                  if (digits.length < 9 || digits.length > 15)
+                    return 'رقم الهاتف غير صالح';
                   return null;
                 },
               ),
               const SizedBox(height: 20),
 
-              Text('تحديد الدور والصلاحيات', style: AppTypography.titleSmall(color: AppColors.textPrimary)),
+              Text(
+                'تحديد الدور والصلاحيات',
+                style: AppTypography.titleSmall(color: AppColors.textPrimary),
+              ),
               const SizedBox(height: 10),
 
               // خيارات الأدوار الثلاثة
               _buildRoleOption(
                 role: 'accountant',
                 title: 'محاسب مالي',
-                subtitle: 'تسجيل القيود والديون، السدادات، الخصومات، وإصدار الكشوفات.',
+                subtitle:
+                    'تسجيل القيود والديون، السدادات، الخصومات، وإصدار الكشوفات.',
                 icon: Icons.calculate_outlined,
                 color: AppColors.primary,
               ),
@@ -147,7 +167,8 @@ class _InviteMemberSheetState extends ConsumerState<InviteMemberSheet> {
               _buildRoleOption(
                 role: 'collector',
                 title: 'محصّل ميداني',
-                subtitle: 'تسجيل استلام الدفعات المالية ومتابعة حسابات العملاء.',
+                subtitle:
+                    'تسجيل استلام الدفعات المالية ومتابعة حسابات العملاء.',
                 icon: Icons.payments_outlined,
                 color: AppColors.paymentGreen,
               ),
@@ -155,7 +176,8 @@ class _InviteMemberSheetState extends ConsumerState<InviteMemberSheet> {
               _buildRoleOption(
                 role: 'admin',
                 title: 'مدير النظام',
-                subtitle: 'صلاحيات كاملة لإدارة الحسابات، التقارير، ودعوة موظفين.',
+                subtitle:
+                    'صلاحيات كاملة لإدارة الحسابات، التقارير، ودعوة موظفين.',
                 icon: Icons.admin_panel_settings_outlined,
                 color: AppColors.accentGoldDark,
               ),
@@ -191,7 +213,9 @@ class _InviteMemberSheetState extends ConsumerState<InviteMemberSheet> {
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: isSelected ? color.withValues(alpha: 0.08) : AppColors.backgroundLight,
+          color: isSelected
+              ? color.withValues(alpha: 0.08)
+              : AppColors.backgroundLight,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: isSelected ? color : AppColors.borderLight,
@@ -224,7 +248,9 @@ class _InviteMemberSheetState extends ConsumerState<InviteMemberSheet> {
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style: AppTypography.caption(color: AppColors.textSecondary),
+                    style: AppTypography.caption(
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                 ],
               ),

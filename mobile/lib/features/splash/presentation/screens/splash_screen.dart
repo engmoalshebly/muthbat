@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
+
 import '../../../../app/router/app_routes.dart';
+import '../../../../core/config/supabase_config.dart';
+import '../../../../core/database/app_database.dart';
+import '../../../local_ledger/local_ledger_store.dart';
 import '../../../../app/theme/app_colors.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../auth/presentation/controllers/auth_controller.dart';
@@ -20,13 +23,62 @@ class SplashScreen extends ConsumerStatefulWidget {
 class _SplashScreenState extends ConsumerState<SplashScreen> {
   bool _hasNavigated = false;
 
+  void _openCurrentAccount() {
+    if (!mounted || _hasNavigated) return;
+    _hasNavigated = true;
+    final account = ref.read(authControllerProvider);
+    final route = account.status != AuthStatus.authenticated
+        ? AppRoutes.localLedger
+        : account.userType == 'customer'
+        ? AppRoutes.customerHome
+        : account.requiresBusinessSetup
+        ? AppRoutes.businessSetup
+        : AppRoutes.merchantHome;
+    Navigator.pushReplacementNamed(context, route);
+  }
+
   @override
   void initState() {
     super.initState();
-    _handleBootstrap();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _handleBootstrap();
+    });
   }
 
   Future<void> _handleBootstrap() async {
+    try {
+      final owner = await AppDatabase.instance.restoreRememberedOwner();
+      if (!mounted) return;
+      if (owner != null) {
+        await ref.read(authControllerProvider.notifier).ready;
+        if (!mounted) return;
+        _openCurrentAccount();
+        return;
+      }
+      final customer = await AppDatabase.instance.restoreRememberedCustomer();
+      if (!mounted) return;
+      if (customer != null) {
+        await ref.read(authControllerProvider.notifier).ready;
+        if (!mounted) return;
+        _openCurrentAccount();
+        return;
+      }
+    } catch (_) {
+      /* Continue to first-use flow if no readable owner store. */
+    }
+    try {
+      final notebook = await LocalLedgerStore.instance.current();
+      if (!mounted) return;
+      if (!SupabaseConfig.cloudReady ||
+          (notebook != null && notebook['transfer_state'] != 'complete')) {
+        Navigator.pushReplacementNamed(context, AppRoutes.localLedger);
+        return;
+      }
+    } catch (_) {
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, AppRoutes.localLedger);
+      return;
+    }
     final controller = ref.read(authControllerProvider.notifier);
     await Future.wait<void>([
       controller.ready.timeout(
@@ -54,7 +106,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         Navigator.pushReplacementNamed(context, AppRoutes.merchantHome);
       }
     } else {
-      Navigator.pushReplacementNamed(context, AppRoutes.login);
+      Navigator.pushReplacementNamed(context, AppRoutes.localLedger);
     }
   }
 
@@ -96,7 +148,8 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                     // 2. الاسم العربي الرئيسي «مُثبَت»
                     Text(
                           AppConstants.appNameArabic,
-                          style: GoogleFonts.tajawal(
+                          style: TextStyle(
+                            fontFamily: 'Tajawal',
                             fontSize: 46,
                             fontWeight: FontWeight.w900,
                             color: Colors.white,
@@ -131,7 +184,8 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                             const SizedBox(width: 8),
                             Text(
                               AppConstants.appNameEnglish,
-                              style: GoogleFonts.manrope(
+                              style: TextStyle(
+                                fontFamily: 'Tajawal',
                                 fontSize: 13.5,
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: 6.0,
@@ -187,7 +241,8 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                               const SizedBox(width: 8),
                               Text(
                                 AppConstants.appTagline,
-                                style: GoogleFonts.tajawal(
+                                style: TextStyle(
+                                  fontFamily: 'Tajawal',
                                   fontSize: 13.5,
                                   fontWeight: FontWeight.w600,
                                   color: AppColors.textWhiteSecondary,
@@ -246,7 +301,8 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                           const SizedBox(width: 6),
                           Text(
                             AppConstants.securityBadgeText,
-                            style: GoogleFonts.tajawal(
+                            style: TextStyle(
+                              fontFamily: 'Tajawal',
                               fontSize: 11.5,
                               fontWeight: FontWeight.w500,
                               color: AppColors.textWhiteSecondary.withValues(

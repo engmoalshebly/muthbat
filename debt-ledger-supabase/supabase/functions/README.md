@@ -14,6 +14,10 @@ Production-ready Edge Functions implemented under Deno runtime with full TypeScr
    - Creates unregistered customer records if absent.
    - Links customer to business via `add_business_customer` and optionally `request_customer_link`.
 
+3. **`member-invite`**
+   - Lets an owner/admin invite a registered employee by phone number.
+   - Resolves the phone only inside the server, rate-limits lookups, and never exposes `auth.users` to the mobile app.
+
 3. **`signed-document-upload`**
    - Creates temporary signed upload sessions for `ledger-documents`.
    - Validates MIME type and max size (10 MiB).

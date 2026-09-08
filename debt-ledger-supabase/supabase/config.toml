@@ -79,7 +79,13 @@ auth_token = "local-openwa-bridge"
 [functions.bootstrap-user-contact]
 verify_jwt = true
 
+[functions.staging-direct-signup]
+verify_jwt = false
+
 [functions.customer-directory]
+verify_jwt = true
+
+[functions.member-invite]
 verify_jwt = true
 
 [functions.signed-document-upload]

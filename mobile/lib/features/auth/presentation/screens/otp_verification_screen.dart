@@ -1,3 +1,4 @@
+import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -63,7 +64,7 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
       (codeToVerify ?? _enteredCode).trim(),
     );
     if (AuthValidators.otpError(code) != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      TopNotice.of(context).showSnackBar(
         const SnackBar(
           content: Text('يرجى إدخال رمز التحقق المكون من 6 أرقام كاملاً'),
           backgroundColor: AppColors.warning,
@@ -72,7 +73,7 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
       return;
     }
     if (_ttlSeconds <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      TopNotice.of(context).showSnackBar(
         const SnackBar(
           content: Text('انتهت صلاحية الرمز. اطلب رمزًا جديدًا للمتابعة.'),
           backgroundColor: AppColors.warning,
@@ -86,7 +87,7 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
     final controller = ref.read(authControllerProvider.notifier);
     final pendingAction = ref.read(authControllerProvider).pendingAction;
     if (pendingAction == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      TopNotice.of(context).showSnackBar(
         const SnackBar(
           content: Text('انتهت جلسة التحقق. ابدأ الطلب من جديد.'),
           backgroundColor: AppColors.warning,
@@ -480,7 +481,7 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
                       )
                     : TextButton.icon(
                         onPressed: () async {
-                          final messenger = ScaffoldMessenger.of(context);
+                          final messenger = TopNotice.of(context);
                           final success = await ref
                               .read(authControllerProvider.notifier)
                               .resendOtp();

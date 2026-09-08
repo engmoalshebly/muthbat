@@ -1,3 +1,4 @@
+import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +13,7 @@ import '../../../../core/finance/currency_info.dart';
 import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../../data/models/customer_summary_model.dart';
 import '../controllers/customer_controller.dart';
+import 'customer_account_ledger_screen.dart';
 
 /// شاشة العميل الرئيسية — بيانات حقيقية من الخادم (customer_business_summary /
 /// customer_link_requests / ledger_timeline) بلا أي أرقام وهمية.
@@ -63,13 +65,11 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
     if (mounted) {
       setState(() => _busyActions.remove(request.id));
       final error = ref.read(customerControllerProvider).errorMessage;
-      ScaffoldMessenger.of(context).showSnackBar(
+      TopNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             success
-                ? (accept
-                      ? 'تم قبول الربط مع «${request.businessName}» — أصبح حسابك مربوطاً'
-                      : 'تم رفض طلب الربط')
+                ? 'حُفظ ردك على طلب الربط. راجع حالة الإرسال؛ الحفظ المحلي لا يعني اكتمال الربط.'
                 : (error ?? 'تعذر تنفيذ العملية — حاول مرة أخرى'),
           ),
           backgroundColor: success ? AppColors.success : AppColors.error,
@@ -93,11 +93,11 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
     if (mounted) {
       setState(() => _busyActions.remove(entry.id));
       final error = ref.read(customerControllerProvider).errorMessage;
-      ScaffoldMessenger.of(context).showSnackBar(
+      TopNotice.of(context).showSnackBar(
         SnackBar(
           content: Text(
             success
-                ? 'تم تأكيد العملية بنجاح ✅'
+                ? 'حُفظ طلب التأكيد. يظهر التأكيد النهائي بعد قبول الخادم.'
                 : (error ??
                       'تعذر تأكيد العملية — تحقق من اتصالك وحاول مرة أخرى'),
           ),
@@ -202,11 +202,11 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
     if (!mounted) return;
     setState(() => _busyActions.remove(entry.id));
     final error = ref.read(customerControllerProvider).errorMessage;
-    ScaffoldMessenger.of(context).showSnackBar(
+    TopNotice.of(context).showSnackBar(
       SnackBar(
         content: Text(
           success
-              ? 'تم إرسال اعتراضك إلى المحل'
+              ? 'حُفظ اعتراضك. راجع حالة الإرسال لمعرفة وصوله إلى المحل.'
               : (error ?? 'تعذر إرسال الاعتراض'),
         ),
         backgroundColor: success ? AppColors.success : AppColors.error,
@@ -293,7 +293,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
                   child: ListView.separated(
                     shrinkWrap: true,
                     itemCount: entries.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    separatorBuilder: (_, _) => const SizedBox(height: 10),
                     itemBuilder: (_, index) {
                       final entry = entries[index];
                       final isDebit = entry.direction == 'debit';
@@ -446,14 +446,31 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
         ),
         actions: [
           IconButton(
+            tooltip:
+                authState.userType == 'merchant' &&
+                    !authState.requiresBusinessSetup
+                ? 'متجري'
+                : 'إنشاء متجري',
+            icon: const Icon(Icons.storefront_outlined),
+            onPressed: () => Navigator.pushNamed(
+              context,
+              authState.userType == 'merchant' &&
+                      !authState.requiresBusinessSetup
+                  ? AppRoutes.merchantHome
+                  : AppRoutes.businessSetup,
+            ),
+          ),
+          IconButton(
             tooltip: 'تسجيل الخروج',
             icon: const Icon(
               Icons.logout_rounded,
               color: AppColors.textSecondary,
             ),
             onPressed: () async {
-              await ref.read(authControllerProvider.notifier).signOut();
-              if (context.mounted) {
+              final result = await ref
+                  .read(authControllerProvider.notifier)
+                  .signOut();
+              if (context.mounted && result.signedOut) {
                 Navigator.pushNamedAndRemoveUntil(
                   context,
                   AppRoutes.login,
@@ -467,6 +484,102 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
       body: Column(
         children: [
           const SyncStatusBanner(),
+          if (state.outbox.isNotEmpty)
+            SizedBox(
+              height: 138,
+              child: ListView(
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16),
+                    child: Text(
+                      'طلبات الزبون المحفوظة: لا تعد مكتملة حتى يقبلها الخادم',
+                    ),
+                  ),
+                  ...state.outbox.map(
+                    (action) => ListTile(
+                      dense: true,
+                      leading: Icon(
+                        action['status'] == 'failed'
+                            ? Icons.error_outline
+                            : Icons.schedule,
+                      ),
+                      title: Text(
+                        action['status'] == 'failed'
+                            ? 'تعذر تنفيذ الطلب'
+                            : 'بانتظار الإرسال أو تأكيد النتيجة',
+                      ),
+                      subtitle: Text(
+                        action['error'] as String? ??
+                            'يعاد الإرسال تلقائيًا عند فتح التطبيق وتوفر جلسة صالحة. إذا استمر الانتظار، تحقق من نشر خدمة المزامنة.',
+                      ),
+                      trailing: action['status'] == 'failed'
+                          ? TextButton(
+                              onPressed: () async {
+                                await ref
+                                    .read(customerRepositoryProvider)
+                                    .retryAction(action['id'] as String);
+                                if (mounted) {
+                                  await ref
+                                      .read(customerControllerProvider.notifier)
+                                      .load();
+                                }
+                              },
+                              child: const Text('إعادة المحاولة'),
+                            )
+                          : null,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          TextButton.icon(
+            onPressed: _busyActions.contains('phone-link')
+                ? null
+                : () async {
+                    setState(() => _busyActions.add('phone-link'));
+                    try {
+                      await ref
+                          .read(customerRepositoryProvider)
+                          .refreshPhoneLinks();
+                      if (!mounted) return;
+                      await ref
+                          .read(customerControllerProvider.notifier)
+                          .load();
+                    } catch (e) {
+                      if (context.mounted) {
+                        TopNotice.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              e.toString().replaceFirst('Exception: ', ''),
+                            ),
+                          ),
+                        );
+                      }
+                    } finally {
+                      if (mounted) {
+                        setState(() => _busyActions.remove('phone-link'));
+                      }
+                    }
+                  },
+            icon: const Icon(Icons.link),
+            label: Text(
+              _busyActions.contains('phone-link')
+                  ? 'جارٍ التحقق من الربط…'
+                  : 'البحث عن حساباتي برقمي الموثق',
+            ),
+          ),
+          if (state.updatedAt != null)
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Text(
+                '${state.isCached ? 'نسخة محفوظة — قد تكون قديمة' : 'آخر تحديث'}: ${DateFormat('yyyy/MM/dd HH:mm').format(DateTime.parse(state.updatedAt!).toLocal())}',
+              ),
+            ),
+          if (state.errorMessage != null && state.summaries.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Text(state.errorMessage!),
+            ),
           Expanded(
             child: RefreshIndicator(
               onRefresh: () =>
@@ -548,7 +661,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'عندما يضيفك محل تجاري برقم هاتفك وترسل له طلب ربط، ستظهر حساباتك وديونك هنا.',
+            'بعد التحقق من رقمك، راجع طلبات البقالات أدناه. تظهر حساباتك بعد قبول الربط؛ القبول لا يعني تأكيد الديون.',
             style: AppTypography.bodySmall(color: AppColors.textSecondary),
             textAlign: TextAlign.center,
           ),
@@ -634,7 +747,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
             Text(
               state.summaries.isEmpty
                   ? 'غير مرتبط بأي محل بعد'
-                  : 'مرتبط بـ ${state.summaries.length} ${state.summaries.length == 1 ? 'محل تجاري' : 'محلات تجارية'}',
+                  : 'مرتبط بـ ${state.summaries.map((s) => s.businessId).toSet().length} محل تجاري',
               style: AppTypography.caption(color: AppColors.accentGold),
             ),
           ],
@@ -695,7 +808,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
                               ),
                             ),
                             Text(
-                              'ترغب «${request.businessName}»${request.businessCity != null ? ' (${request.businessCity})' : ''} بربط حسابك لعرض المشتريات والديون.',
+                              'ترغب «${request.businessName}»${request.businessCity != null ? ' (${request.businessCity})' : ''} بربط حسابك لعرض الحركات والديون. قبول الربط لا يعني تأكيد الديون.',
                               style: AppTypography.caption(
                                 color: AppColors.textSecondary,
                               ),
@@ -879,6 +992,16 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
             ],
           ),
           const Divider(height: 24, color: AppColors.borderLight),
+          TextButton.icon(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => CustomerAccountLedgerScreen(summary: summary),
+              ),
+            ),
+            icon: const Icon(Icons.receipt_long_outlined),
+            label: const Text('عرض جميع الحركات'),
+          ),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -927,7 +1050,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
                 ),
                 icon: const Icon(AppIcons.shieldCheck, size: 16),
                 label: Text(
-                  pendingCount > 0 ? 'تأكيد ($pendingCount)' : 'تأكيد السجل',
+                  pendingCount > 0 ? 'مراجعة ($pendingCount)' : 'لا قيود معلقة',
                 ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.paymentGreen,

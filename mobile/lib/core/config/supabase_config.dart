@@ -23,6 +23,7 @@ import 'env.dart';
 /// └─────────────────────────────────────────────────────────────────┘
 class SupabaseConfig {
   SupabaseConfig._();
+  static bool cloudReady = false;
 
   /// عنوان مشروع Supabase — يُحقن وقت البناء.
   static const String supabaseUrl = String.fromEnvironment('SUPABASE_URL');

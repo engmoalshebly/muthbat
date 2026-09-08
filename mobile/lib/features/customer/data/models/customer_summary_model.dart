@@ -1,8 +1,17 @@
-/// نماذج بيانات شاشة العميل — تقرأ من عروض Supabase العامة
-/// (`customer_business_summary`, `customer_link_requests`, `ledger_timeline`).
+// نماذج بيانات شاشة العميل من عروض Supabase العامة المحمية بالصلاحيات.
 
 /// ملخص علاقة العميل بمحل واحد بعملة واحدة (صف من عرض customer_business_summary)
 class CustomerBusinessSummary {
+  Map<String, dynamic> toMap() => {
+    'business_customer_id': businessCustomerId,
+    'business_id': businessId,
+    'business_name': businessName,
+    'business_type': businessType,
+    'currency_code': currencyCode,
+    'current_balance': currentBalance,
+    'entry_count': entryCount,
+    'last_entry_at': lastEntryAt,
+  };
   final String businessCustomerId;
   final String businessId;
   final String businessName;
@@ -40,6 +49,13 @@ class CustomerBusinessSummary {
 
 /// طلب ربط حساب معلق موجه للعميل (صف من customer_link_requests)
 class CustomerLinkRequestModel {
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'status': status,
+    'created_at': createdAt,
+    'business_name': businessName,
+    'business_city': businessCity,
+  };
   final String id;
   final String status;
   final String? createdAt;
@@ -63,8 +79,11 @@ class CustomerLinkRequestModel {
       id: map['id'] as String,
       status: map['status'] as String? ?? 'pending',
       createdAt: map['created_at'] as String?,
-      businessName: biz?['name'] as String? ?? 'محل تجاري',
-      businessCity: biz?['city'] as String?,
+      businessName:
+          map['business_name'] as String? ??
+          biz?['name'] as String? ??
+          'محل تجاري',
+      businessCity: map['business_city'] as String? ?? biz?['city'] as String?,
       localDisplayName: bc?['local_display_name'] as String? ?? '',
     );
   }
@@ -72,6 +91,16 @@ class CustomerLinkRequestModel {
 
 /// قيد مالي بانتظار تأكيد العميل (صف من عرض ledger_timeline)
 class CustomerPendingEntry {
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'business_customer_id': businessCustomerId,
+    'entry_type': entryType,
+    'direction': direction,
+    'amount': amount,
+    'currency_code': currencyCode,
+    'description': description,
+    'occurred_at': occurredAt,
+  };
   final String id;
   final String businessCustomerId;
   final String entryType; // 'debt', 'payment', 'discount', ...

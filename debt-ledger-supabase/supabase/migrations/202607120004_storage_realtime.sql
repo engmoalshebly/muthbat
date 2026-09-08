@@ -25,6 +25,19 @@ on conflict (id) do update set
   file_size_limit=excluded.file_size_limit,
   allowed_mime_types=excluded.allowed_mime_types;
 
+-- A remote CLI/network interruption can apply the storage DDL before the
+-- migration ledger is updated. Re-running must therefore replace these exact
+-- policies instead of failing on their existing names.
+drop policy if exists business_assets_staff_insert on storage.objects;
+drop policy if exists business_assets_staff_update on storage.objects;
+drop policy if exists business_assets_staff_delete on storage.objects;
+drop policy if exists avatars_owner_select on storage.objects;
+drop policy if exists avatars_owner_insert on storage.objects;
+drop policy if exists avatars_owner_update on storage.objects;
+drop policy if exists avatars_owner_delete on storage.objects;
+drop policy if exists ledger_documents_authorized_select on storage.objects;
+drop policy if exists statements_authorized_select on storage.objects;
+
 -- Business asset path: <business_id>/<file>
 create policy business_assets_staff_insert on storage.objects
 for insert to authenticated

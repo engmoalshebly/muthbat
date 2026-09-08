@@ -1,3 +1,4 @@
+import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -51,7 +52,7 @@ class _ReversalConfirmSheetState extends ConsumerState<ReversalConfirmSheet> {
       setState(() => _isSubmitting = false);
       if (success) {
         Navigator.pop(context, true);
-        ScaffoldMessenger.of(context).showSnackBar(
+        TopNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
               'تم عكس القيد بمبلغ ${NumberFormat('#,##0.##').format(widget.entry.amount)} ${ref.read(merchantControllerProvider).currency}',
@@ -61,7 +62,7 @@ class _ReversalConfirmSheetState extends ConsumerState<ReversalConfirmSheet> {
           ),
         );
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
+        TopNotice.of(context).showSnackBar(
           const SnackBar(
             content: Text('حدث خطأ أثناء عكس القيد. حاول مرة أخرى.'),
             backgroundColor: AppColors.error,

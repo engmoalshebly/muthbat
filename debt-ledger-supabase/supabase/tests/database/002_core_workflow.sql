@@ -31,10 +31,10 @@ select is(
 
 -- Debt and payment use stable client request IDs, so a retried offline payment is not duplicated.
 select set_config('request.jwt.claim.sub','81111111-1111-1111-1111-111111111111',true);
-select set_config('test.debt_id',public.create_ledger_entry(current_setting('test.business_customer_id')::uuid,'debt',100,'Invoice WF-100',now(),current_date + 14,null,'84444444-4444-4444-4444-444444444444')::text,true);
-select set_config('test.payment_id',public.create_ledger_entry(current_setting('test.business_customer_id')::uuid,'payment',20,'Payment WF-20',now(),null,null,'85555555-5555-5555-5555-555555555555')::text,true);
+select set_config('test.debt_id',public.create_ledger_entry(p_business_customer_id := current_setting('test.business_customer_id')::uuid,p_entry_type := 'debt',p_amount := 100,p_description := 'Invoice WF-100',p_occurred_at := now(),p_due_date := current_date + 14,p_client_request_id := '84444444-4444-4444-4444-444444444444'::uuid)::text,true);
+select set_config('test.payment_id',public.create_ledger_entry(p_business_customer_id := current_setting('test.business_customer_id')::uuid,p_entry_type := 'payment',p_amount := 20,p_description := 'Payment WF-20',p_occurred_at := now(),p_client_request_id := '85555555-5555-5555-5555-555555555555'::uuid)::text,true);
 select is(
-  public.create_ledger_entry(current_setting('test.business_customer_id')::uuid,'payment',20,'Payment WF-20',now(),null,null,'85555555-5555-5555-5555-555555555555'),
+  public.create_ledger_entry(p_business_customer_id := current_setting('test.business_customer_id')::uuid,p_entry_type := 'payment',p_amount := 20,p_description := 'Payment WF-20',p_occurred_at := now(),p_client_request_id := '85555555-5555-5555-5555-555555555555'::uuid),
   current_setting('test.payment_id')::uuid, 'A repeated client request returns the original payment'
 );
 select is(
@@ -42,11 +42,12 @@ select is(
   2, 'Duplicate payment retry does not create a second ledger entry'
 );
 
--- The linked customer can confirm an entry and open a dispute; merchant resolves it with a correction.
+-- The linked customer can confirm one entry and dispute another pending entry;
+-- a confirmed entry intentionally cannot be disputed.
 select set_config('request.jwt.claim.sub','82222222-2222-2222-2222-222222222222',true);
-select public.confirm_ledger_entry(current_setting('test.debt_id')::uuid);
+select public.confirm_ledger_entry(current_setting('test.payment_id')::uuid);
 select is(
-  (select confirmation_status::text from public.ledger_entry_state where entry_id=current_setting('test.debt_id')::uuid),
+  (select confirmation_status::text from public.ledger_entry_state where entry_id=current_setting('test.payment_id')::uuid),
   'confirmed', 'Customer confirmation changes the entry state'
 );
 select set_config('test.dispute_id',public.open_dispute(current_setting('test.debt_id')::uuid,'wrong_amount','The claimed amount is too high')::text,true);

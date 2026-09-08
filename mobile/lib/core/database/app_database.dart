@@ -3,8 +3,29 @@ import 'dart:io';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../finance/currency_info.dart';
 import '../finance/money.dart';
+
+dynamic replaceReconciledIdDeep(
+  dynamic value,
+  String localId,
+  String serverId,
+) {
+  if (value is String) return value == localId ? serverId : value;
+  if (value is Map) {
+    return value.map(
+      (key, child) =>
+          MapEntry(key, replaceReconciledIdDeep(child, localId, serverId)),
+    );
+  }
+  if (value is List) {
+    return value
+        .map((child) => replaceReconciledIdDeep(child, localId, serverId))
+        .toList();
+  }
+  return value;
+}
 
 /// قاعدة البيانات المحلية السريعة (SQLite Offline Cache Engine)
 ///
@@ -21,8 +42,99 @@ class AppDatabase {
   static const _uuid = Uuid();
 
   Database? _database;
+  String? _accountId;
+  String? get accountId => _accountId;
+  static const _rememberedOwnerKey = 'remembered_local_owner_v1';
+  static const _rememberedCustomerKey = 'remembered_local_customer_v1';
+
+  /// Local device access only. A cached profile is never a server credential.
+  Future<void> rememberCustomer() async {
+    final id = _accountId;
+    if (id == null || await getProfile(id) == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (!await prefs.setString(_rememberedCustomerKey, id)) {
+      throw StateError('Unable to persist local customer preference');
+    }
+  }
+
+  Future<Map<String, dynamic>?> restoreRememberedCustomer() async {
+    final prefs = await SharedPreferences.getInstance();
+    final id = prefs.getString(_rememberedCustomerKey);
+    if (id == null) return null;
+    await bindAccount(id);
+    final profile = await getProfile(id);
+    if (profile == null) {
+      await lockAccount();
+      return null;
+    }
+    return profile;
+  }
+
+  /// Local access preference only: never used as a JWT or server credential.
+  Future<void> rememberOwner() async {
+    final id = _accountId;
+    if (id == null || await getBusinessByOwnerId(id) == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (!await prefs.setString(_rememberedOwnerKey, id)) {
+      throw StateError('Unable to persist local owner preference');
+    }
+  }
+
+  Future<Map<String, dynamic>?> restoreRememberedOwner() async {
+    final prefs = await SharedPreferences.getInstance();
+    final id = prefs.getString(_rememberedOwnerKey);
+    if (id == null) return null;
+    await bindAccount(id);
+    final business = await getBusinessByOwnerId(id);
+    if (business == null) {
+      await lockAccount();
+      return null;
+    }
+    return business;
+  }
+
+  Future<void> forgetRememberedOwner() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_rememberedOwnerKey);
+    await prefs.remove(_rememberedCustomerKey);
+  }
+
+  /// Call only after draining SyncEngine. Legacy storage is copied (not moved)
+  /// only when its single cached profile establishes the account owner.
+  Future<void> bindAccount(String userId) async {
+    if (!RegExp(r'^[a-fA-F0-9-]{36}$').hasMatch(userId)) {
+      throw ArgumentError('Invalid account id');
+    }
+    if (_accountId == userId) return;
+    await _database?.close();
+    _database = null;
+    _accountId = null;
+    final directory = await getDatabasesPath();
+    final target = join(directory, 'muthbat_account_$userId.db');
+    final legacy = join(directory, _dbName);
+    if (!await File(target).exists() && await File(legacy).exists()) {
+      final old = await openDatabase(legacy, readOnly: true);
+      bool belongsToUser = false;
+      try {
+        final profiles = await old.query('local_profiles', columns: ['id']);
+        belongsToUser = profiles.length == 1 && profiles.single['id'] == userId;
+      } finally {
+        await old.close();
+      }
+      if (belongsToUser) await File(legacy).copy(target);
+    }
+    _accountId = userId;
+    await database;
+  }
+
+  Future<void> lockAccount() async {
+    await _database?.close();
+    _database = null;
+    _accountId = null;
+  }
 
   Future<Database> get database async {
+    if (_accountId == null) throw StateError('Account storage is locked');
     if (_database != null) return _database!;
     _database = await _initDatabase();
     return _database!;
@@ -30,7 +142,10 @@ class AppDatabase {
 
   Future<Database> _initDatabase() async {
     final dbPath = await getDatabasesPath();
-    final path = join(dbPath, _dbName);
+    final path = join(
+      dbPath,
+      _accountId == null ? _dbName : 'muthbat_account_$_accountId.db',
+    );
 
     return await openDatabase(
       path,
@@ -560,6 +675,7 @@ class AppDatabase {
       business,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+    await rememberOwner();
   }
 
   Future<Map<String, dynamic>?> getBusinessByOwnerId(String ownerUserId) async {
@@ -1331,6 +1447,69 @@ class AppDatabase {
     return rows.isNotEmpty ? rows.first['server_id'] as String? : null;
   }
 
+  /// تسوية المنشأة التي أُنشئت دون اتصال. لا يكفي تغيير المفتاح في جدول
+  /// المنشآت؛ كل أمر محفوظ بعده قد يحتوي `biz-*` داخل حمولة JSON.
+  Future<void> reconcileBusinessId({
+    required String localId,
+    required String serverId,
+  }) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.insert('local_id_map', {
+        'local_id': localId,
+        'server_id': serverId,
+        'entity_type': 'business',
+        'created_at': DateTime.now().toIso8601String(),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+
+      final serverRow = await txn.query(
+        'local_businesses',
+        where: 'id = ?',
+        whereArgs: [serverId],
+        limit: 1,
+      );
+      if (serverRow.isEmpty) {
+        await txn.update(
+          'local_businesses',
+          {'id': serverId},
+          where: 'id = ?',
+          whereArgs: [localId],
+        );
+      } else {
+        await txn.delete(
+          'local_businesses',
+          where: 'id = ?',
+          whereArgs: [localId],
+        );
+      }
+      await txn.update(
+        'local_business_customers',
+        {'business_id': serverId},
+        where: 'business_id = ?',
+        whereArgs: [localId],
+      );
+      await txn.update(
+        'local_ledger_entries',
+        {'business_id': serverId},
+        where: 'business_id = ?',
+        whereArgs: [localId],
+      );
+      await txn.update(
+        'local_customer_currency_balances',
+        {'business_id': serverId},
+        where: 'business_id = ?',
+        whereArgs: [localId],
+      );
+      await txn.update(
+        'local_disputes',
+        {'business_id': serverId},
+        where: 'business_id = ?',
+        whereArgs: [localId],
+      );
+    });
+    await _rewritePayloadsForReconciledId(localId, serverId);
+  }
+
   /// تسوية معرّف عميل محلي (cust-*) بمعرّف السيرفر بعد نجاح الإنشاء:
   /// تحديث المفتاح المحلي وكل المراجع + إعادة كتابة حمولات الأوامر المعلقة.
   Future<void> reconcileCustomerId({
@@ -1456,7 +1635,7 @@ class AppDatabase {
 
       try {
         final decoded = jsonDecode(payloadJson);
-        final rewritten = _replaceIdDeep(decoded, localId, serverId);
+        final rewritten = replaceReconciledIdDeep(decoded, localId, serverId);
         await db.update(
           'offline_mutations_queue',
           {'payload_json': jsonEncode(rewritten)},
@@ -1467,19 +1646,6 @@ class AppDatabase {
         // حمولة تالفة تُترك كما هي — ستُصنَّف dead_letter عند الإرسال
       }
     }
-  }
-
-  dynamic _replaceIdDeep(dynamic value, String localId, String serverId) {
-    if (value is String) return value == localId ? serverId : value;
-    if (value is Map) {
-      return value.map(
-        (k, v) => MapEntry(k, _replaceIdDeep(v, localId, serverId)),
-      );
-    }
-    if (value is List) {
-      return value.map((e) => _replaceIdDeep(e, localId, serverId)).toList();
-    }
-    return value;
   }
 
   // ==================== نقاط تحقق السحب التزايدي ====================
@@ -1647,14 +1813,16 @@ class AppDatabase {
       }
     }
 
-    await db.delete('local_profiles');
-    await db.delete('local_businesses');
-    await db.delete('local_business_customers');
-    await db.delete('local_ledger_entries');
-    await db.delete('local_customer_currency_balances');
-    await db.delete('offline_mutations_queue');
-    await db.delete('local_disputes');
-    await db.delete('local_id_map');
-    await db.delete('local_sync_checkpoints');
+    await db.transaction((txn) async {
+      await txn.delete('local_customer_currency_balances');
+      await txn.delete('local_disputes');
+      await txn.delete('local_ledger_entries');
+      await txn.delete('local_business_customers');
+      await txn.delete('local_businesses');
+      await txn.delete('local_profiles');
+      await txn.delete('offline_mutations_queue');
+      await txn.delete('local_id_map');
+      await txn.delete('local_sync_checkpoints');
+    });
   }
 }

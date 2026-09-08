@@ -1,3 +1,4 @@
+import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -67,7 +68,7 @@ class _BusinessProfileEditScreenState
     if (!mounted) return;
     setState(() => _saving = false);
     final error = ref.read(merchantControllerProvider).lastError;
-    ScaffoldMessenger.of(context).showSnackBar(
+    TopNotice.of(context).showSnackBar(
       SnackBar(
         content: Text(
           ok
