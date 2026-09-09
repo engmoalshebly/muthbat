@@ -38,6 +38,7 @@ services:
     environment:
       # Core
       - NODE_ENV=${NODE_ENV:-production}
+      - HTTPS_ENABLED=${HTTPS_ENABLED:-false}
       - PORT=2785
       - LOG_LEVEL=${LOG_LEVEL:-info}
       # Database
@@ -220,4 +221,3 @@ volumes:
 networks:
   default:
     name: openwa-network
-

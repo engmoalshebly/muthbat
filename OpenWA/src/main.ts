@@ -99,6 +99,10 @@ async function bootstrap() {
   app.useGlobalFilters(new HttpExceptionFilter());
 
   // Enhanced Security Headers (Phase 3 Security Audit)
+  // HSTS and CSP upgrades must only be emitted when a TLS terminator is
+  // actually configured. Sending them over a temporary HTTP/IP deployment
+  // makes browsers upgrade dashboard routes to unavailable HTTPS URLs.
+  const httpsEnabled = process.env.HTTPS_ENABLED === 'true';
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -110,14 +114,16 @@ async function bootstrap() {
           connectSrc: ["'self'"],
           fontSrc: ["'self'"],
           objectSrc: ["'none'"],
-          upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : null,
+          upgradeInsecureRequests: httpsEnabled ? [] : null,
         },
       },
-      hsts: {
-        maxAge: 31536000,
-        includeSubDomains: true,
-        preload: true,
-      },
+      hsts: httpsEnabled
+        ? {
+            maxAge: 31536000,
+            includeSubDomains: true,
+            preload: true,
+          }
+        : false,
       noSniff: true,
       referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
       // Disable for API usage
@@ -204,4 +210,3 @@ async function bootstrap() {
 }
 
 void bootstrap();
-
