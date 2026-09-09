@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'local_ledger_store.dart';
+import '../../app/theme/app_colors.dart';
 
 class LocalAnalytics extends StatelessWidget {
   const LocalAnalytics({super.key, required this.document});
@@ -43,7 +44,62 @@ class LocalAnalytics extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('ملخص الدفتر', style: Theme.of(context).textTheme.titleLarge),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              gradient: AppColors.brandGradient,
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(
+                      Icons.account_balance_wallet_outlined,
+                      color: AppColors.accentGoldLight,
+                    ),
+                    SizedBox(width: 10),
+                    Text(
+                      'نظرة على بقالتك',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'إجمالي المستحق لك',
+                  style: TextStyle(color: AppColors.textWhiteSecondary),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '${LocalLedgerStore.money(receivables)} ${document['currency']}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '${(document['customers'] as List).length} عميل  •  ${entries.length} حركة مسجلة',
+                  style: const TextStyle(color: AppColors.accentGoldLight),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            'ملخص الدفتر',
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: AppColors.primary,
+            ),
+          ),
           Text(
             'كل الفترات • $debtors عملاء عليهم رصيد • ${document['currency']}',
           ),
@@ -58,15 +114,27 @@ class LocalAnalytics extends StatelessWidget {
                       width: (constraints.maxWidth - 8) / 2,
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.primaryContainer.withValues(alpha: .35),
-                        borderRadius: BorderRadius.circular(16),
+                        color: Colors.white,
+                        border: Border.all(color: AppColors.borderLight),
+                        borderRadius: BorderRadius.circular(20),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(item.$3, size: 20),
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: item.$1 == 'دفعات مستلمة'
+                                  ? AppColors.successLight
+                                  : AppColors.primaryContainer,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(
+                              item.$3,
+                              size: 20,
+                              color: AppColors.secondaryDark,
+                            ),
+                          ),
                           const SizedBox(height: 8),
                           Text(item.$1),
                           Text(

@@ -34,7 +34,8 @@ void main() {
     });
     await tester.pumpAndSettle();
     expect(find.text('أحمد'), findsOneWidget);
-    expect(find.text('50 YER'), findsOneWidget);
+    // The same amount is shown in the overview and the customer card.
+    expect(find.text('50 YER'), findsNWidgets(2));
     await tester.tap(find.text('دين / دفعة'));
     await tester.pumpAndSettle();
     expect(find.text('حفظ على الجهاز'), findsOneWidget);

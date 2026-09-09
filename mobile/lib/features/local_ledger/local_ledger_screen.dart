@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../app/router/app_routes.dart';
+import '../../app/theme/app_colors.dart';
 import '../../core/config/supabase_config.dart';
 import '../auth/presentation/controllers/auth_controller.dart';
 import '../auth/presentation/validators/auth_validators.dart';
@@ -378,7 +379,11 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
         ? null
         : customers.where((c) => c['id'] == selected).firstOrNull;
     return Scaffold(
+      backgroundColor: AppColors.backgroundLight,
       appBar: AppBar(
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+        toolbarHeight: 72,
         title: Text(customer?['name'] ?? d?['name'] ?? 'مُثبَت'),
         leading: customer == null
             ? null
@@ -445,11 +450,33 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.menu_book_rounded, size: 76),
+                        Container(
+                          padding: const EdgeInsets.all(28),
+                          decoration: BoxDecoration(
+                            gradient: AppColors.brandGradient,
+                            borderRadius: BorderRadius.circular(32),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.primary.withValues(alpha: .16),
+                                blurRadius: 30,
+                                offset: const Offset(0, 12),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.menu_book_rounded,
+                            size: 72,
+                            color: AppColors.accentGoldLight,
+                          ),
+                        ),
                         const SizedBox(height: 24),
                         Text(
                           'دفتر بقالتك، جاهز من أول لحظة',
-                          style: Theme.of(context).textTheme.headlineSmall,
+                          style: Theme.of(context).textTheme.headlineSmall
+                              ?.copyWith(
+                                color: AppColors.primary,
+                                fontWeight: FontWeight.w800,
+                              ),
                           textAlign: TextAlign.center,
                         ),
                         const SizedBox(height: 12),
@@ -459,6 +486,13 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                         ),
                         const SizedBox(height: 24),
                         FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppColors.secondaryDark,
+                            minimumSize: const Size(double.infinity, 54),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
                           onPressed: busy ? null : setup,
                           child: const Text('ابدأ دفتر البقالة'),
                         ),
@@ -490,6 +524,11 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
               children: [
                 if (busy) const LinearProgressIndicator(),
                 MaterialBanner(
+                  backgroundColor: AppColors.primaryContainer,
+                  leading: const Icon(
+                    Icons.verified_user_outlined,
+                    color: AppColors.secondaryDark,
+                  ),
                   content: Text(
                     d['transfer_state'] == 'complete'
                         ? 'نُقل هذا الدفتر إلى الحساب. هذه نسخة محلية محفوظة للقراءة.'
@@ -588,23 +627,62 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                                         d,
                                         c['id'],
                                       );
-                                      return ListTile(
-                                        leading: const CircleAvatar(
-                                          child: Icon(Icons.person_outline),
+                                      return Card(
+                                        elevation: 0,
+                                        color: Colors.white,
+                                        margin: const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                          vertical: 5,
                                         ),
-                                        title: Text(c['name']),
-                                        subtitle: Text(
-                                          balance < 0
-                                              ? 'له رصيد عند البقالة'
-                                              : balance == 0
-                                              ? 'الحساب مسدد'
-                                              : 'عليه للبقالة',
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            20,
+                                          ),
+                                          side: const BorderSide(
+                                            color: AppColors.borderLight,
+                                          ),
                                         ),
-                                        trailing: Text(
-                                          '${LocalLedgerStore.money(balance.abs())} ${d['currency']}',
+                                        child: ListTile(
+                                          contentPadding:
+                                              const EdgeInsets.symmetric(
+                                                horizontal: 16,
+                                                vertical: 8,
+                                              ),
+                                          leading: CircleAvatar(
+                                            backgroundColor:
+                                                AppColors.primaryContainer,
+                                            child: Text(
+                                              (c['name'] as String)
+                                                  .characters
+                                                  .first,
+                                              style: const TextStyle(
+                                                color: AppColors.primary,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                          title: Text(c['name']),
+                                          subtitle: Text(
+                                            balance < 0
+                                                ? 'له رصيد عند البقالة'
+                                                : balance == 0
+                                                ? 'الحساب مسدد'
+                                                : 'عليه للبقالة',
+                                          ),
+                                          trailing: Text(
+                                            '${LocalLedgerStore.money(balance.abs())} ${d['currency']}',
+                                            style: TextStyle(
+                                              color: balance > 0
+                                                  ? AppColors.debtRed
+                                                  : AppColors.paymentGreen,
+                                              fontWeight: FontWeight.w800,
+                                              fontSize: 16,
+                                            ),
+                                          ),
+                                          onTap: () => setState(
+                                            () => selected = c['id'],
+                                          ),
                                         ),
-                                        onTap: () =>
-                                            setState(() => selected = c['id']),
                                       );
                                     })
                                     .toList(),
@@ -618,26 +696,54 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                                 final reversed = entries.any(
                                   (r) => r['reverses'] == e['id'],
                                 );
-                                return ListTile(
-                                  title: Text(
-                                    '${LocalLedgerStore.labels[e['type']]} • ${LocalLedgerStore.money(e['minor'])} ${d['currency']}',
+                                return Card(
+                                  elevation: 0,
+                                  color: Colors.white,
+                                  margin: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 5,
                                   ),
-                                  subtitle: Text(
-                                    '${e['description']}\n${(e['occurred_at'] as String).substring(0, 10)}${reversed ? ' • عُكست' : ''}',
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(18),
+                                    side: const BorderSide(
+                                      color: AppColors.borderLight,
+                                    ),
                                   ),
-                                  isThreeLine: true,
-                                  trailing:
-                                      !frozen &&
-                                          !reversed &&
-                                          e['type'] != 'reversal'
-                                      ? IconButton(
-                                          tooltip: 'عكس العملية',
-                                          onPressed: busy
-                                              ? null
-                                              : () => reverse(JsonMap.from(e)),
-                                          icon: const Icon(Icons.undo),
-                                        )
-                                      : null,
+                                  child: ListTile(
+                                    leading: CircleAvatar(
+                                      backgroundColor: e['direction'] == 'debit'
+                                          ? AppColors.errorLight
+                                          : AppColors.successLight,
+                                      child: Icon(
+                                        e['direction'] == 'debit'
+                                            ? Icons.north_east
+                                            : Icons.south_west,
+                                        color: e['direction'] == 'debit'
+                                            ? AppColors.debtRed
+                                            : AppColors.paymentGreen,
+                                      ),
+                                    ),
+                                    title: Text(
+                                      '${LocalLedgerStore.labels[e['type']]} • ${LocalLedgerStore.money(e['minor'])} ${d['currency']}',
+                                    ),
+                                    subtitle: Text(
+                                      '${e['description']}\n${(e['occurred_at'] as String).substring(0, 10)}${reversed ? ' • عُكست' : ''}',
+                                    ),
+                                    isThreeLine: true,
+                                    trailing:
+                                        !frozen &&
+                                            !reversed &&
+                                            e['type'] != 'reversal'
+                                        ? IconButton(
+                                            tooltip: 'عكس العملية',
+                                            onPressed: busy
+                                                ? null
+                                                : () =>
+                                                      reverse(JsonMap.from(e)),
+                                            icon: const Icon(Icons.undo),
+                                          )
+                                        : null,
+                                  ),
                                 );
                               })
                               .toList(),
