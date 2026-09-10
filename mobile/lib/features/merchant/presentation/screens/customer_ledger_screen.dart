@@ -733,7 +733,9 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                                       spacing: 4,
                                       runSpacing: 4,
                                       children: [
-                                        if (categoryLabel.isNotEmpty)
+                                        if ((entry.localCategoryLabel ??
+                                                categoryLabel)
+                                            .isNotEmpty)
                                           Container(
                                             padding: const EdgeInsets.symmetric(
                                               horizontal: 5,
@@ -745,7 +747,8 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                                                   BorderRadius.circular(4),
                                             ),
                                             child: Text(
-                                              categoryLabel,
+                                              entry.localCategoryLabel ??
+                                                  categoryLabel,
                                               style: const TextStyle(
                                                 fontSize: 9,
                                                 color: AppColors.badgeGoodsText,
@@ -1159,8 +1162,6 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
     );
   }
 
-
-
   Widget _buildCurrencyFilterChip(String? currencyCode, String label) {
     final isSelected = _selectedCurrencyFilter == currencyCode;
     return GestureDetector(
@@ -1235,6 +1236,7 @@ class _LedgerEntryDetailsSheet extends StatelessWidget {
   }
 
   String _categoryLabel() {
+    if (entry.localCategoryLabel != null) return entry.localCategoryLabel!;
     switch (entry.category) {
       case 'goods':
         return 'بضاعة';

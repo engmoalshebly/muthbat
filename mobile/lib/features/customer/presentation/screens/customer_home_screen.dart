@@ -700,14 +700,14 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
     }
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       decoration: const BoxDecoration(
         color: AppColors.primaryDark,
-        borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
+        borderRadius: BorderRadius.vertical(bottom: Radius.circular(18)),
       ),
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(20),
@@ -736,7 +736,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
                   child: Text(
                     '${currencyFormatter.format(e.value)} ${_currencySymbol(e.key)}',
                     style: const TextStyle(
-                      fontSize: 28,
+                      fontSize: 24,
                       fontWeight: FontWeight.w900,
                       color: AppColors.debtRed,
                     ),

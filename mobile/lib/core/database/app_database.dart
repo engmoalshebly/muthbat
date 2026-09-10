@@ -37,7 +37,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const String _dbName = 'muthbat_offline_ledger.db';
-  static const int _dbVersion = 7;
+  static const int _dbVersion = 8;
 
   static const _uuid = Uuid();
 
@@ -178,6 +178,11 @@ class AppDatabase {
     }
     if (oldVersion < 7) {
       await _migrateToV7(db);
+    }
+    if (oldVersion < 8) {
+      await db.execute(
+        'ALTER TABLE local_ledger_entries ADD COLUMN local_category_label TEXT',
+      );
     }
   }
 
@@ -533,6 +538,7 @@ class AppDatabase {
         amount_minor INTEGER,
         currency_code TEXT DEFAULT 'YER',
         category TEXT DEFAULT 'goods',
+        local_category_label TEXT,
         payment_method TEXT DEFAULT 'cash',
         reference_number TEXT,
         bank_or_agent_name TEXT,
@@ -1178,6 +1184,7 @@ class AppDatabase {
       'currency_code':
           (row['currency_code'] as String?)?.toUpperCase() ?? 'YER',
       'category': row['category'] ?? 'goods',
+      'local_category_label': row['local_category_label'],
       'payment_method': row['payment_method'] ?? 'cash',
       'reference_number': row['reference_number'],
       'bank_or_agent_name': row['bank_or_agent_name'],

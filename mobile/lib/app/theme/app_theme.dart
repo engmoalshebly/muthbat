@@ -26,11 +26,60 @@ class AppTheme {
         onError: AppColors.textWhite,
       ),
       fontFamily: AppTypography.arabicFontFamily,
+      textTheme: TextTheme(
+        titleLarge: AppTypography.titleLarge(),
+        titleMedium: AppTypography.titleMedium(),
+        titleSmall: AppTypography.titleSmall(),
+        bodyLarge: AppTypography.bodyLarge(),
+        bodyMedium: AppTypography.bodyMedium(),
+        bodySmall: AppTypography.bodySmall(color: AppColors.textSecondary),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: AppColors.surfaceLight,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        titleTextStyle: AppTypography.titleLarge(),
+        contentTextStyle: AppTypography.bodyLarge(),
+      ),
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: AppColors.surfaceLight,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        clipBehavior: Clip.antiAlias,
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          textStyle: AppTypography.titleSmall(),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          side: const BorderSide(color: AppColors.borderLight),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          textStyle: AppTypography.titleSmall(),
+        ),
+      ),
       appBarTheme: const AppBarTheme(
         backgroundColor: AppColors.surfaceLight,
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
         centerTitle: true,
+        toolbarHeight: 56,
+        titleTextStyle: TextStyle(
+          fontFamily: 'Tajawal',
+          fontSize: 18,
+          fontWeight: FontWeight.w700,
+          color: AppColors.textPrimary,
+        ),
         scrolledUnderElevation: 0.5,
         systemOverlayStyle: SystemUiOverlayStyle(
           statusBarColor: Colors.transparent,
@@ -86,7 +135,7 @@ class AppTheme {
           backgroundColor: AppColors.primary,
           foregroundColor: AppColors.textWhite,
           elevation: 0,
-          minimumSize: const Size(double.infinity, 52),
+          minimumSize: const Size(48, 48),
           shape: RoundedRectangleBorder(
             borderRadius: AppDecorations.roundedMedium,
           ),
@@ -94,11 +143,12 @@ class AppTheme {
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
+        isDense: true,
         filled: true,
         fillColor: AppColors.surfaceLight,
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 16,
+          horizontal: 12,
+          vertical: 12,
         ),
         border: OutlineInputBorder(
           borderRadius: AppDecorations.roundedMedium,

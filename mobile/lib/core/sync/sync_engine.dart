@@ -238,7 +238,9 @@ class SyncEngine {
   /// تشغيل المزامنة اليدوية أو التلقائية
   Future<void> triggerSync() async {
     if (_isProcessing || _paused) return;
-    if (Supabase.instance.client.auth.currentSession == null || Supabase.instance.client.auth.currentSession!.isExpired) return;
+    if (Supabase.instance.client.auth.currentSession == null ||
+        Supabase.instance.client.auth.currentSession!.isExpired)
+      return;
     if (AppDatabase.instance.accountId !=
         Supabase.instance.client.auth.currentUser?.id)
       return;
@@ -691,8 +693,25 @@ class SyncEngine {
     final rows = await filter.order('created_at', ascending: true).limit(500);
     if (rows.isEmpty) return;
 
+    // Optional on legacy servers; other failures must not advance the cursor.
+    final categoryLabels = <String, String>{};
+    try {
+      final labels = await client
+          .from('local_import_entry_categories')
+          .select('entry_id,label')
+          .inFilter('entry_id', rows.map((r) => r['id'] as String).toList());
+      for (final label in labels) {
+        categoryLabels[label['entry_id'] as String] = label['label'] as String;
+      }
+    } on PostgrestException catch (error) {
+      if (error.code != 'PGRST205' && error.code != '42P01') rethrow;
+    }
+
     for (final row in rows) {
-      await db.upsertLedgerEntryFromServer(Map<String, dynamic>.from(row));
+      await db.upsertLedgerEntryFromServer({
+        ...Map<String, dynamic>.from(row),
+        'local_category_label': categoryLabels[row['id']],
+      });
     }
 
     // تحديث المؤشر بعد نجاح الدفعة (محلياً + السيرفر بأفضل جهد)

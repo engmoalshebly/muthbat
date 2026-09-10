@@ -1,6 +1,7 @@
 import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,8 +14,11 @@ import '../../core/config/supabase_config.dart';
 import '../auth/presentation/controllers/auth_controller.dart';
 import '../auth/presentation/validators/auth_validators.dart';
 import 'local_ledger_store.dart';
+import 'local_palette.dart';
 import 'local_ledger_pdf.dart';
 import 'local_analytics.dart';
+import 'local_directory.dart';
+import 'local_entry_screen.dart';
 
 /// The local route does not instantiate AuthController or wait for the network.
 class LocalLedgerScreen extends StatefulWidget {
@@ -32,6 +36,201 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
   bool busy = false;
   String search = '';
   String? selected;
+  int tab = 0;
+
+  Widget _quickAction(IconData icon, String label, VoidCallback? onTap) =>
+      Material(
+        color: onTap == null ? Colors.white : LocalPalette.mint,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 6),
+            child: Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: onTap == null ? Colors.white : LocalPalette.teal,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    icon,
+                    size: 24,
+                    color: onTap == null ? AppColors.textMuted : Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: LocalPalette.ink,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+  Future<void> openAccount() async {
+    if (!SupabaseConfig.cloudReady) {
+      throw StateError('الحساب غير متاح في هذه النسخة. دفتر جهازك محفوظ.');
+    }
+    final container = ProviderScope.containerOf(context, listen: false);
+    await container.read(authControllerProvider.notifier).ready;
+    if (!mounted) return;
+    final account = container.read(authControllerProvider);
+    final transferred =
+        doc?['transfer_state'] == 'complete' &&
+        doc?['owner_id'] == account.userId;
+    final route = account.status != AuthStatus.authenticated
+        ? AppRoutes.login
+        : transferred
+        ? AppRoutes.merchantHome
+        : account.userType == 'customer'
+        ? AppRoutes.customerHome
+        : account.requiresBusinessSetup
+        ? AppRoutes.businessSetup
+        : AppRoutes.merchantHome;
+    await Navigator.pushNamed(context, route);
+    await reload();
+  }
+
+  Future<void> backup() async => shareBytes(
+    utf8.encode(await store.backup()),
+    'muthbat-backup-${DateTime.now().millisecondsSinceEpoch}.json',
+    'application/json',
+  );
+
+  Widget accountPanel(JsonMap d) {
+    final complete = d['transfer_state'] == 'complete';
+    final pending = d['transfer_state'] != 'local' && !complete;
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            gradient: LocalPalette.hero,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(
+                Icons.storefront_rounded,
+                color: LocalPalette.gold,
+                size: 28,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                d['name'],
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                complete
+                    ? 'نسخة محلية محفوظة بعد النقل'
+                    : 'دفترك يعمل دون إنترنت ودون اشتراك',
+                style: const TextStyle(color: Colors.white),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          complete ? 'تم نقل دفتر حسابك' : 'انتقل إلى حساب تاجر، بنفس بياناتك',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'الحساب اختياري. تسجيل الدخول وحده لا ينقل الدفتر؛ ستراجع البيانات وتؤكد الربط أولًا.',
+        ),
+        const SizedBox(height: 16),
+        ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          title: const Text(
+            'كيف أنقل دفتري؟',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+          ),
+          leading: const Icon(
+            Icons.cloud_upload_outlined,
+            color: LocalPalette.teal,
+          ),
+          children: [
+            const ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: CircleAvatar(child: Text('1')),
+              title: Text('إنشاء حساب أو تسجيل الدخول'),
+              subtitle: Text('برقمك، دون إعادة إدخال تفاصيل الدفتر'),
+            ),
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: const CircleAvatar(child: Text('2')),
+              title: const Text('مراجعة الدفتر وتأكيد نقله'),
+              subtitle: Text(
+                '${(d['customers'] as List).length} عميل • ${(d['entries'] as List).length} عملية • ${d['currency']}',
+              ),
+            ),
+            const ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: CircleAvatar(child: Text('3')),
+              title: Text('متابعة العمل من حساب التاجر'),
+              subtitle: Text(
+                'تبقى نسخة الدفتر على هذا الجهاز للقراءة بعد نجاح النقل',
+              ),
+            ),
+          ],
+        ),
+        if (pending)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Text(
+              'النقل لم يكتمل. استكمله بالحساب نفسه؛ لا تنشئ دفترًا بديلًا.',
+            ),
+          ),
+        FilledButton.icon(
+          onPressed: busy
+              ? null
+              : () => run(complete ? openAccount : activateCloud),
+          icon: Icon(complete ? Icons.storefront : Icons.cloud_upload_outlined),
+          label: Text(
+            complete
+                ? 'متابعة إلى الحساب'
+                : pending
+                ? 'استكمال نقل الدفتر'
+                : 'تفعيل حساب التاجر',
+          ),
+        ),
+        const SizedBox(height: 24),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.save_alt),
+            title: const Text('حفظ نسخة احتياطية'),
+            subtitle: const Text('لحماية الدفتر عند فقد الهاتف أو حذف التطبيق'),
+            trailing: const Icon(Icons.chevron_left),
+            onTap: busy ? null : () => run(backup),
+          ),
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'الحفظ المحلي ليس نسخة سحابية. تفعيل الحساب ونقل البيانات يحتاجان اتصالًا بالإنترنت.',
+        ),
+      ],
+    );
+  }
 
   @override
   void initState() {
@@ -92,7 +291,7 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, update) => AlertDialog(
-          title: const Text('ابدأ دفتر البقالة'),
+          title: const Text('ابدأ دفتر حساب'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -100,8 +299,8 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                 controller: name,
                 maxLength: 120,
                 decoration: const InputDecoration(
-                  labelText: 'اسم البقالة (اختياري)',
-                  hintText: 'بقالتي',
+                  labelText: 'اسم الدفتر (اختياري)',
+                  hintText: 'حساباتي',
                 ),
               ),
               DropdownButtonFormField<String>(
@@ -138,103 +337,22 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
     if (accepted == true) await run(() => store.create(value, currency));
   }
 
-  Future<void> entry({String? customerId}) async {
-    final name = TextEditingController();
-    final amount = TextEditingController();
-    final description = TextEditingController();
-    String type = 'debt';
-    String? customer = customerId;
-    final customers = doc!['customers'] as List;
-    final accepted = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, update) => AlertDialog(
-          title: const Text('سجّل عملية'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String>(
-                  initialValue: customer ?? '',
-                  isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'العميل'),
-                  items: [
-                    const DropdownMenuItem(value: '', child: Text('عميل جديد')),
-                    ...customers.map(
-                      (c) => DropdownMenuItem<String>(
-                        value: c['id'],
-                        child: Text(c['name']),
-                      ),
-                    ),
-                  ],
-                  onChanged: (v) => update(() => customer = v == '' ? null : v),
-                ),
-                if (customer == null)
-                  TextField(
-                    controller: name,
-                    maxLength: 120,
-                    decoration: const InputDecoration(labelText: 'اسم العميل'),
-                  ),
-                DropdownButtonFormField<String>(
-                  initialValue: type,
-                  decoration: const InputDecoration(labelText: 'نوع العملية'),
-                  items: const [
-                    DropdownMenuItem(value: 'debt', child: Text('دين — عليه')),
-                    DropdownMenuItem(
-                      value: 'payment',
-                      child: Text('دفعة — سداد'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'discount',
-                      child: Text('خصم من الدين'),
-                    ),
-                  ],
-                  onChanged: (v) => update(() => type = v!),
-                ),
-                TextField(
-                  controller: amount,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  decoration: InputDecoration(
-                    labelText: 'المبلغ (${doc!['currency']})',
-                  ),
-                ),
-                TextField(
-                  controller: description,
-                  maxLength: 500,
-                  decoration: const InputDecoration(
-                    labelText: 'البيان (اختياري)',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('حفظ على الجهاز'),
-            ),
-          ],
+  Future<void> entry({String? customerId, String initialType = 'debt'}) async {
+    if (busy || doc == null) return;
+    final id = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => LocalEntryScreen(
+          store: store,
+          document: doc!,
+          customerId: customerId,
+          initialType: initialType,
         ),
       ),
     );
-    if (accepted == true) {
-      await run(() async {
-        final id = await store.record(
-          customerId: customer,
-          customerName: name.text,
-          type: type,
-          amount: amount.text,
-          description: description.text,
-        );
-        if (mounted) setState(() => selected = id);
-      });
-    }
+    if (!mounted) return;
+    if (id != null) setState(() => selected = id);
+    await reload();
   }
 
   Future<void> reverse(JsonMap e) async {
@@ -296,6 +414,9 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
   }
 
   Future<void> activateCloud() async {
+    final categoryCount = (doc?['entries'] as List? ?? [])
+        .where((e) => e['category'] != null)
+        .length;
     if (!SupabaseConfig.cloudReady) {
       throw StateError(
         'الاتصال بالحساب غير متاح في هذه النسخة. يمكنك مواصلة العمل محليًا.',
@@ -333,13 +454,19 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
     );
     if (ok != true) return;
     // Check deployment BEFORE freezing the local notebook.
+    dynamic importVersion;
     try {
-      await client
+      importVersion = await client
           .rpc('local_notebook_import_version')
           .timeout(const Duration(seconds: 15));
     } catch (_) {
       throw StateError(
         'خدمة نقل الدفتر لم تصبح متاحة بعد. تابع العمل محليًا واحتفظ بنسخة احتياطية.',
+      );
+    }
+    if (importVersion is! int || importVersion < (categoryCount > 0 ? 2 : 1)) {
+      throw StateError(
+        'يلزم تحديث خدمة النقل لحفظ التصنيفات. دفتر الحساب ما زال متاحًا محليًا.',
       );
     }
     final snapshot = await store.reserveTransfer(user.id);
@@ -354,13 +481,16 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
     if (result is! Map ||
         result['entry_count'] != (snapshot['entries'] as List).length ||
         result['customer_count'] != (snapshot['customers'] as List).length ||
-        result['business_id'] is! String) {
+        result['business_id'] is! String ||
+        (categoryCount > 0 && result['category_count'] != categoryCount)) {
       throw StateError(
         'لم يكتمل التحقق من النقل. أعد المحاولة؛ النسخة المحلية محفوظة.',
       );
     }
     await store.completeTransfer(user.id, result['business_id']);
+    await reload();
     if (mounted) {
+      setState(() => tab = 3);
       TopNotice.of(context).showSnackBar(
         const SnackBar(
           content: Text('تم نقل الدفتر. افتح الحساب لمواصلة العمل والمزامنة.'),
@@ -379,19 +509,92 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
         ? null
         : customers.where((c) => c['id'] == selected).firstOrNull;
     return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
+      backgroundColor: LocalPalette.canvas,
       appBar: AppBar(
         backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
-        toolbarHeight: 72,
-        title: Text(customer?['name'] ?? d?['name'] ?? 'مُثبَت'),
-        leading: customer == null
+        toolbarHeight: 64,
+        centerTitle: false,
+        titleSpacing: 16,
+        automaticallyImplyLeading: false,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        systemOverlayStyle: SystemUiOverlayStyle.light.copyWith(
+          statusBarColor: Colors.transparent,
+        ),
+        titleTextStyle: const TextStyle(
+          fontFamily: 'Tajawal',
+          fontSize: 18,
+          fontWeight: FontWeight.w700,
+          color: Colors.white,
+        ),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              customer?['name'] ?? d?['name'] ?? 'مُثبَت | دفتر حساب',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            if (customer == null)
+              Text(
+                d == null
+                    ? 'حساباتك ببساطة'
+                    : [
+                        'دفتر حساب شخصي',
+                        'العملاء',
+                        'التقارير',
+                        'إدارة الحساب',
+                      ][tab],
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textWhiteSecondary,
+                ),
+              ),
+          ],
+        ),
+        leading: customer == null && tab == 0
             ? null
             : IconButton(
-                onPressed: () => setState(() => selected = null),
+                onPressed: () => setState(() {
+                  if (selected != null) {
+                    selected = null;
+                  } else {
+                    tab = 0;
+                  }
+                }),
                 icon: const Icon(Icons.arrow_back),
               ),
         actions: [
+          if (d != null) ...[
+            IconButton(
+              tooltip: 'التقارير',
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.white.withValues(alpha: .10),
+              ),
+              onPressed: () => setState(() {
+                selected = null;
+                tab = 2;
+              }),
+              icon: const Icon(Icons.bar_chart),
+            ),
+            IconButton(
+              tooltip: 'الحساب',
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.white.withValues(alpha: .10),
+              ),
+              onPressed: () => setState(() {
+                selected = null;
+                tab = 3;
+              }),
+              icon: const Icon(Icons.person_outline),
+            ),
+          ],
           if (d != null)
             PopupMenuButton<String>(
               enabled: !busy,
@@ -405,7 +608,7 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                 } else if (v == 'cloud') {
                   await activateCloud();
                 } else if (v == 'account') {
-                  await Navigator.pushNamed(context, AppRoutes.login);
+                  await openAccount();
                 }
               }),
               itemBuilder: (_) => const [
@@ -451,9 +654,9 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Container(
-                          padding: const EdgeInsets.all(28),
+                          padding: const EdgeInsets.all(18),
                           decoration: BoxDecoration(
-                            gradient: AppColors.brandGradient,
+                            gradient: LocalPalette.hero,
                             borderRadius: BorderRadius.circular(32),
                             boxShadow: [
                               BoxShadow(
@@ -465,14 +668,14 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                           ),
                           child: const Icon(
                             Icons.menu_book_rounded,
-                            size: 72,
-                            color: AppColors.accentGoldLight,
+                            size: 44,
+                            color: LocalPalette.gold,
                           ),
                         ),
                         const SizedBox(height: 24),
                         Text(
-                          'دفتر بقالتك، جاهز من أول لحظة',
-                          style: Theme.of(context).textTheme.headlineSmall
+                          'دفتر حسابك، جاهز من أول لحظة',
+                          style: Theme.of(context).textTheme.titleLarge
                               ?.copyWith(
                                 color: AppColors.primary,
                                 fontWeight: FontWeight.w800,
@@ -482,19 +685,24 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                         const SizedBox(height: 12),
                         const Text(
                           'سجّل العملاء والديون والدفعات دون حساب ودون إنترنت.',
+                          style: TextStyle(
+                            color: LocalPalette.secondaryText,
+                            fontSize: 14,
+                            height: 1.6,
+                          ),
                           textAlign: TextAlign.center,
                         ),
                         const SizedBox(height: 24),
                         FilledButton(
                           style: FilledButton.styleFrom(
-                            backgroundColor: AppColors.secondaryDark,
+                            backgroundColor: LocalPalette.teal,
                             minimumSize: const Size(double.infinity, 54),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(16),
                             ),
                           ),
                           onPressed: busy ? null : setup,
-                          child: const Text('ابدأ دفتر البقالة'),
+                          child: const Text('ابدأ دفتر حساب'),
                         ),
                         TextButton(
                           onPressed: busy || !SupabaseConfig.cloudReady
@@ -512,6 +720,11 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                         const SizedBox(height: 16),
                         const Text(
                           'بياناتك محفوظة على هذا الجهاز. صدّر نسخة احتياطية لحمايتها عند فقد الهاتف أو حذف التطبيق.',
+                          style: TextStyle(
+                            color: LocalPalette.secondaryText,
+                            fontSize: 12,
+                            height: 1.6,
+                          ),
                           textAlign: TextAlign.center,
                         ),
                       ],
@@ -520,239 +733,194 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                 ),
               ),
             )
-          : Column(
+          : customer == null && tab == 3
+          ? accountPanel(d)
+          : customer == null && (tab == 0 || tab == 2)
+          ? ListView(
+              padding: const EdgeInsets.only(bottom: 100),
               children: [
                 if (busy) const LinearProgressIndicator(),
-                MaterialBanner(
-                  backgroundColor: AppColors.primaryContainer,
-                  leading: const Icon(
-                    Icons.verified_user_outlined,
-                    color: AppColors.secondaryDark,
-                  ),
-                  content: Text(
-                    d['transfer_state'] == 'complete'
-                        ? 'نُقل هذا الدفتر إلى الحساب. هذه نسخة محلية محفوظة للقراءة.'
-                        : frozen
-                        ? 'النقل قيد الاستكمال. أعد المحاولة بالحساب نفسه.'
-                        : 'محفوظ على هذا الجهاز • الحساب اختياري',
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: busy
-                          ? null
-                          : () => run(
-                              d['transfer_state'] == 'complete'
-                                  ? () async {
-                                      await Navigator.pushNamed(
-                                        context,
-                                        AppRoutes.login,
-                                      );
-                                    }
-                                  : activateCloud,
-                            ),
-                      child: Text(
-                        d['transfer_state'] == 'complete'
-                            ? 'فتح الحساب'
-                            : frozen
-                            ? 'استكمال النقل'
-                            : 'حفظ سحابي',
-                      ),
-                    ),
-                  ],
-                ),
-                if (customer == null)
-                  Flexible(
-                    child: SingleChildScrollView(
-                      child: LocalAnalytics(document: d),
-                    ),
-                  ),
-                if (customer == null)
+                if (tab == 0)
                   Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: TextField(
-                      onChanged: (v) => setState(() => search = v),
-                      decoration: const InputDecoration(
-                        prefixIcon: Icon(Icons.search),
-                        hintText: 'ابحث عن عميل',
-                      ),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.offline_pin_outlined,
+                          color: LocalPalette.teal,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            frozen
+                                ? 'نسخة محلية • راجع حالة النقل في الحساب'
+                                : 'محفوظ على جهازك • يعمل دون إنترنت',
+                          ),
+                        ),
+                      ],
                     ),
-                  )
-                else
+                  ),
+                LocalAnalytics(document: d, summaryOnly: tab == 0),
+                if (tab == 0) ...[
                   Padding(
                     padding: const EdgeInsets.all(16),
                     child: Row(
                       children: [
                         Expanded(
-                          child: Text(
-                            'الرصيد: ${LocalLedgerStore.money(LocalLedgerStore.balance(d, selected!))} ${d['currency']}',
-                            style: Theme.of(context).textTheme.titleLarge,
+                          child: _quickAction(
+                            Icons.people_outline,
+                            'العملاء',
+                            () => setState(() => tab = 1),
                           ),
                         ),
-                        IconButton(
-                          tooltip: 'مشاركة كشف PDF',
-                          onPressed: busy
-                              ? null
-                              : () => run(() async {
-                                  await shareBytes(
-                                    await localLedgerPdf(
-                                      d,
-                                      JsonMap.from(customer),
-                                    ),
-                                    'statement-${customer['id']}.pdf',
-                                    'application/pdf',
-                                  );
-                                }),
-                          icon: const Icon(Icons.picture_as_pdf),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _quickAction(
+                            Icons.receipt_long_outlined,
+                            'تسجيل دين',
+                            frozen || busy ? null : () => entry(),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _quickAction(
+                            Icons.payments_outlined,
+                            'تسجيل دفعة',
+                            frozen || busy
+                                ? null
+                                : () => entry(initialType: 'payment'),
+                          ),
                         ),
                       ],
                     ),
                   ),
-                Expanded(
-                  child: customer == null
-                      ? customers.isEmpty
-                            ? const Center(
-                                child: Text(
-                                  'ابدأ بإضافة أول عميل ودين من الزر أدناه.',
-                                ),
-                              )
-                            : ListView(
-                                children: customers
-                                    .where(
-                                      (c) => (c['name'] as String).contains(
-                                        search,
-                                      ),
-                                    )
-                                    .map<Widget>((c) {
-                                      final balance = LocalLedgerStore.balance(
-                                        d,
-                                        c['id'],
-                                      );
-                                      return Card(
-                                        elevation: 0,
-                                        color: Colors.white,
-                                        margin: const EdgeInsets.symmetric(
-                                          horizontal: 16,
-                                          vertical: 5,
-                                        ),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            20,
-                                          ),
-                                          side: const BorderSide(
-                                            color: AppColors.borderLight,
-                                          ),
-                                        ),
-                                        child: ListTile(
-                                          contentPadding:
-                                              const EdgeInsets.symmetric(
-                                                horizontal: 16,
-                                                vertical: 8,
-                                              ),
-                                          leading: CircleAvatar(
-                                            backgroundColor:
-                                                AppColors.primaryContainer,
-                                            child: Text(
-                                              (c['name'] as String)
-                                                  .characters
-                                                  .first,
-                                              style: const TextStyle(
-                                                color: AppColors.primary,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          ),
-                                          title: Text(c['name']),
-                                          subtitle: Text(
-                                            balance < 0
-                                                ? 'له رصيد عند البقالة'
-                                                : balance == 0
-                                                ? 'الحساب مسدد'
-                                                : 'عليه للبقالة',
-                                          ),
-                                          trailing: Text(
-                                            '${LocalLedgerStore.money(balance.abs())} ${d['currency']}',
-                                            style: TextStyle(
-                                              color: balance > 0
-                                                  ? AppColors.debtRed
-                                                  : AppColors.paymentGreen,
-                                              fontWeight: FontWeight.w800,
-                                              fontSize: 16,
-                                            ),
-                                          ),
-                                          onTap: () => setState(
-                                            () => selected = c['id'],
-                                          ),
-                                        ),
-                                      );
-                                    })
-                                    .toList(),
-                              )
-                      : ListView(
-                          children: entries
-                              .where((e) => e['customer_id'] == selected)
-                              .toList()
-                              .reversed
-                              .map<Widget>((e) {
-                                final reversed = entries.any(
-                                  (r) => r['reverses'] == e['id'],
-                                );
-                                return Card(
-                                  elevation: 0,
-                                  color: Colors.white,
-                                  margin: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 5,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(18),
-                                    side: const BorderSide(
-                                      color: AppColors.borderLight,
-                                    ),
-                                  ),
-                                  child: ListTile(
-                                    leading: CircleAvatar(
-                                      backgroundColor: e['direction'] == 'debit'
-                                          ? AppColors.errorLight
-                                          : AppColors.successLight,
-                                      child: Icon(
-                                        e['direction'] == 'debit'
-                                            ? Icons.north_east
-                                            : Icons.south_west,
-                                        color: e['direction'] == 'debit'
-                                            ? AppColors.debtRed
-                                            : AppColors.paymentGreen,
-                                      ),
-                                    ),
-                                    title: Text(
-                                      '${LocalLedgerStore.labels[e['type']]} • ${LocalLedgerStore.money(e['minor'])} ${d['currency']}',
-                                    ),
-                                    subtitle: Text(
-                                      '${e['description']}\n${(e['occurred_at'] as String).substring(0, 10)}${reversed ? ' • عُكست' : ''}',
-                                    ),
-                                    isThreeLine: true,
-                                    trailing:
-                                        !frozen &&
-                                            !reversed &&
-                                            e['type'] != 'reversal'
-                                        ? IconButton(
-                                            tooltip: 'عكس العملية',
-                                            onPressed: busy
-                                                ? null
-                                                : () =>
-                                                      reverse(JsonMap.from(e)),
-                                            icon: const Icon(Icons.undo),
-                                          )
-                                        : null,
-                                  ),
-                                );
-                              })
-                              .toList(),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Card(
+                      child: ListTile(
+                        leading: const Icon(
+                          Icons.cloud_upload_outlined,
+                          color: LocalPalette.teal,
                         ),
-                ),
-                const SizedBox(height: 80),
+                        title: Text(
+                          frozen
+                              ? 'متابعة حالة نقل الدفتر'
+                              : 'دفترك جاهز لحساب التاجر',
+                        ),
+                        subtitle: const Text(
+                          'نفس العملاء والعمليات، دون البدء من جديد',
+                        ),
+                        trailing: const Icon(Icons.chevron_left),
+                        onTap: () => setState(() => tab = 3),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+                    child: Text(
+                      'آخر العمليات',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  if (entries.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text('سجّل أول دين أو دفعة من الاختصارات أعلاه.'),
+                    ),
+                  ...LocalLedgerStore.chronological(
+                    entries,
+                  ).reversed.take(5).map((e) {
+                    final owner = customers
+                        .where((c) => c['id'] == e['customer_id'])
+                        .firstOrNull;
+                    return Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: Material(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () =>
+                              setState(() => selected = e['customer_id']),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  e['direction'] == 'debit'
+                                      ? Icons.receipt_long_outlined
+                                      : Icons.payments_outlined,
+                                  color: LocalPalette.teal,
+                                  size: 22,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '${LocalLedgerStore.labels[e['type']]} · ${owner?['name'] ?? 'عميل'}',
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      Text(
+                                        LocalLedgerStore.localDate(
+                                          e['occurred_at'],
+                                        ),
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: LocalPalette.secondaryText,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: Text(
+                                    '${LocalLedgerStore.money(e['minor'])} ${d['currency']}',
+                                    textAlign: TextAlign.end,
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700,
+                                      color: e['direction'] == 'debit'
+                                          ? LocalPalette.debt
+                                          : LocalPalette.payment,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+                ],
               ],
+            )
+          : LocalDirectory(
+              key: ValueKey(selected ?? 'directory'),
+              document: d,
+              customerId: selected,
+              busy: busy,
+              onOpen: (id) => setState(() => selected = id),
+              onReverse: reverse,
+              onPdf: () => run(() async {
+                await shareBytes(
+                  await localLedgerPdf(d, JsonMap.from(customer!)),
+                  'statement-${customer['id']}.pdf',
+                  'application/pdf',
+                );
+              }),
             ),
-      floatingActionButton: d == null || frozen
+      floatingActionButton: d == null || frozen || (customer == null && tab > 1)
           ? null
           : FloatingActionButton.extended(
               onPressed: busy ? null : () => entry(customerId: selected),
@@ -804,8 +972,13 @@ class _LocalAccountScreenState extends ConsumerState<LocalAccountScreen> {
       if (!otp && !RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch(normalized)) {
         throw const FormatException('أدخل رقم الهاتف مع مفتاح الدولة');
       }
-      if (!otp && AuthValidators.passwordError(password.text) != null) {
+      if (!otp &&
+          signup &&
+          AuthValidators.passwordError(password.text) != null) {
         throw FormatException(AuthValidators.passwordError(password.text)!);
+      }
+      if (!otp && !signup && password.text.isEmpty) {
+        throw const FormatException('أدخل كلمة المرور');
       }
       final ok = otp
           ? await controller.verifySignupOtp(code.text)
@@ -838,7 +1011,7 @@ class _LocalAccountScreenState extends ConsumerState<LocalAccountScreen> {
         setState(
           () => error = e is FormatException
               ? e.message
-              : 'تعذر الاتصال؛ يمكنك الرجوع إلى دفتر البقالة.',
+              : 'تعذر الاتصال؛ يمكنك الرجوع إلى دفتر حساب.',
         );
       }
     } finally {
@@ -848,12 +1021,15 @@ class _LocalAccountScreenState extends ConsumerState<LocalAccountScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
+    backgroundColor: LocalPalette.canvas,
     appBar: AppBar(
+      backgroundColor: AppColors.primary,
+      foregroundColor: Colors.white,
       title: Text(
         otp
             ? 'تأكيد الرقم'
             : signup
-            ? 'احفظ دفتر بقالتك'
+            ? 'احفظ دفتر حسابك'
             : 'الدخول إلى حسابك',
       ),
     ),
@@ -862,8 +1038,43 @@ class _LocalAccountScreenState extends ConsumerState<LocalAccountScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            'بقالتك «${widget.businessName}» جاهزة. لا تحتاج إلى إدخال بياناتها من جديد.',
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              gradient: LocalPalette.hero,
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.cloud_done_outlined,
+                  color: LocalPalette.gold,
+                  size: 40,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  otp
+                      ? 'خطوة واحدة لتأكيد هويتك'
+                      : 'دفترك معك في الخطوة التالية',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'دفترك «${widget.businessName}» جاهزة. لا تحتاج إلى إدخال بياناتها من جديد.',
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            'تأكيد الحساب ← مراجعة البيانات ← نقل الدفتر',
+            textAlign: TextAlign.center,
           ),
           const SizedBox(height: 24),
           if (otp)
@@ -888,7 +1099,7 @@ class _LocalAccountScreenState extends ConsumerState<LocalAccountScreen> {
               obscureText: obscure,
               decoration: InputDecoration(
                 labelText: 'كلمة المرور',
-                helperText: '8 خانات على الأقل',
+                helperText: signup ? '8 خانات على الأقل' : null,
                 suffixIcon: IconButton(
                   onPressed: () => setState(() => obscure = !obscure),
                   icon: Icon(obscure ? Icons.visibility : Icons.visibility_off),
@@ -906,6 +1117,10 @@ class _LocalAccountScreenState extends ConsumerState<LocalAccountScreen> {
             ),
           const SizedBox(height: 24),
           FilledButton(
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(54),
+              backgroundColor: LocalPalette.teal,
+            ),
             onPressed: busy ? null : submit,
             child: Text(
               busy

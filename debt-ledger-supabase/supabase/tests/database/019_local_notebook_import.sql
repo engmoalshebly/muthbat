@@ -1,5 +1,5 @@
 begin;
-select plan(5);
+select plan(10);
 insert into auth.users(instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,raw_app_meta_data,raw_user_meta_data,created_at,updated_at)
 values('00000000-0000-0000-0000-000000000000','93811111-1111-1111-1111-111111111111','authenticated','authenticated','local-import@example.test','unused',now(),'{}','{"display_name":"Import merchant","user_type":"merchant"}',now(),now());
 set local role authenticated;
@@ -13,11 +13,18 @@ select set_config('test.notebook',jsonb_build_object(
     jsonb_build_object('id','93866666-6666-6666-6666-666666666666','customer_id','93833333-3333-3333-3333-333333333333','type','discount','direction','credit','minor',100000,'description','Local discount','occurred_at',now()),
     jsonb_build_object('id','93877777-7777-7777-7777-777777777777','customer_id','93833333-3333-3333-3333-333333333333','type','reversal','direction','debit','minor',200000,'description','Reverse payment','occurred_at',now(),'reverses','93855555-5555-5555-5555-555555555555')
   ))::text,true);
+select set_config('test.notebook',jsonb_set(current_setting('test.notebook')::jsonb,'{entries,0,category}','"مواد غذائية"'::jsonb)::text,true);
 select set_config('test.import_result',public.import_local_notebook(current_setting('test.notebook')::jsonb)::text,true);
+select is(public.local_notebook_import_version(),2,'Category import capability is version 2');
+select is((current_setting('test.import_result')::jsonb->>'category_count')::int,1,'Acknowledges preserved category count');
+select is((select label from public.local_import_entry_categories c join public.ledger_entries e on e.id=c.entry_id where e.business_id=(current_setting('test.import_result')::jsonb->>'business_id')::uuid),'مواد غذائية','Preserves the original Arabic category');
 select is((current_setting('test.import_result')::jsonb->>'entry_count')::int,4,'Imports all financial entry types');
 select is(public.import_local_notebook(current_setting('test.notebook')::jsonb)::text,current_setting('test.import_result'),'Retry returns same result');
 select is((select count(*)::int from public.ledger_entries where business_id=(current_setting('test.import_result')::jsonb->>'business_id')::uuid),4,'Retry does not duplicate entries');
 select is((select sum(case when direction='debit' then amount else -amount end) from public.ledger_entries where business_id=(current_setting('test.import_result')::jsonb->>'business_id')::uuid),90::numeric,'Imported net balance includes reversal correctly');
 select throws_ok($$select public.import_local_notebook(current_setting('test.notebook')::jsonb || '{"name":"Changed notebook"}'::jsonb)$$,'22023','Imported snapshot cannot be changed','Cannot mutate a completed snapshot');
+select throws_ok($$update public.local_import_entry_categories set label='Changed'$$,'42501',null,'Client cannot mutate imported categories');
+select set_config('request.jwt.claim.sub','93899999-9999-9999-9999-999999999999',true);
+select is((select count(*)::int from public.local_import_entry_categories),0,'Another account cannot read category labels');
 select * from finish();
 rollback;

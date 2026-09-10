@@ -63,7 +63,7 @@ class LocalLedgerStore {
     final doc = <String, dynamic>{
       'version': 1,
       'id': _uuid.v4(),
-      'name': name.trim().isEmpty ? 'بقالتي' : name.trim(),
+      'name': name.trim().isEmpty ? 'حساباتي' : name.trim(),
       'currency': currency,
       'created_at': DateTime.now().toUtc().toIso8601String(),
       'customers': <JsonMap>[],
@@ -116,8 +116,32 @@ class LocalLedgerStore {
     required String type,
     required String amount,
     String description = '',
+    DateTime? occurredAt,
+    String? category,
+    String? requestId,
   }) {
     return _edit((doc) {
+      final descriptionIssue = descriptionError(description);
+      if (descriptionIssue != null) throw FormatException(descriptionIssue);
+      if (requestId != null) {
+        final existing = (doc['entries'] as List)
+            .where((e) => e['request_id'] == requestId)
+            .firstOrNull;
+        if (existing != null) {
+          final fingerprint = jsonEncode([
+            customerId,
+            customerName?.trim(),
+            type,
+            normalizeDigits(amount),
+            description.trim(),
+            occurredAt?.toUtc().toIso8601String(),
+            category?.trim(),
+          ]);
+          if (existing['request_payload'] != fingerprint)
+            throw StateError('تغيّرت بيانات طلب محفوظ؛ افتح عملية جديدة');
+          return existing['customer_id'] as String;
+        }
+      }
       if (doc['transfer_state'] != 'local') {
         throw StateError(
           'الدفتر قيد النقل أو نُقل للحساب. أكمل النقل قبل التعديل.',
@@ -141,7 +165,9 @@ class LocalLedgerStore {
         if (name.length < 2 || name.length > 120) {
           throw const FormatException('اسم العميل من حرفين إلى 120 حرفًا');
         }
-        if (customers.any((c) => c['name'] == name)) {
+        if (customers.any(
+          (c) => normalizeName(c['name']) == normalizeName(name),
+        )) {
           throw const FormatException('الاسم موجود؛ اختر العميل من القائمة');
         }
         customers.add({'id': id, 'name': name});
@@ -153,6 +179,18 @@ class LocalLedgerStore {
       }
       (doc['entries'] as List).add({
         'id': _uuid.v4(),
+        if (requestId != null) 'request_id': requestId,
+        if (requestId != null)
+          'request_payload': jsonEncode([
+            customerId,
+            customerName?.trim(),
+            type,
+            normalizeDigits(amount),
+            description.trim(),
+            occurredAt?.toUtc().toIso8601String(),
+            category?.trim(),
+          ]),
+        'created_at': DateTime.now().toUtc().toIso8601String(),
         'customer_id': id,
         'type': type,
         'minor': money.minorUnits,
@@ -160,7 +198,8 @@ class LocalLedgerStore {
         'description': description.trim().isEmpty
             ? labels[type]!
             : description.trim(),
-        'occurred_at': DateTime.now().toUtc().toIso8601String(),
+        'occurred_at': (occurredAt ?? DateTime.now()).toUtc().toIso8601String(),
+        if (category != null) 'category': category.trim(),
         'reverses': null,
       });
       return id;
@@ -281,6 +320,46 @@ class LocalLedgerStore {
     'discount': 'خصم',
     'reversal': 'عكس',
   };
+  static String? descriptionError(String value) {
+    if (value.trim().isEmpty) return 'أدخل وصف العملية قبل الحفظ';
+    if (value.trim().length < 2 || value.trim().length > 500)
+      return 'وصف العملية من حرفين إلى 500 حرف';
+    return null;
+  }
+
+  static Map<String, Map<String, int>> categoryTotals(JsonMap doc) {
+    final entries = doc['entries'] as List;
+    final reversed = entries
+        .where((e) => e['reverses'] != null)
+        .map((e) => e['reverses'])
+        .toSet();
+    final totals = <String, Map<String, int>>{};
+    for (final e in entries) {
+      if (e['type'] == 'reversal' || reversed.contains(e['id'])) continue;
+      final bucket = totals.putIfAbsent(
+        e['category'] ?? 'غير مصنف',
+        () => {'debt': 0, 'payment': 0, 'discount': 0},
+      );
+      bucket[e['type']] = bucket[e['type']]! + (e['minor'] as int);
+    }
+    return totals;
+  }
+
+  static String normalizeName(String value) =>
+      value.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+  static String localDate(String value) =>
+      DateTime.parse(value).toLocal().toIso8601String().substring(0, 10);
+  static List<dynamic> chronological(List entries) {
+    final indexed = entries.asMap().entries.toList();
+    indexed.sort((a, b) {
+      final order = DateTime.parse(
+        a.value['occurred_at'],
+      ).compareTo(DateTime.parse(b.value['occurred_at']));
+      return order == 0 ? a.key.compareTo(b.key) : order;
+    });
+    return indexed.map((e) => e.value).toList();
+  }
+
   static String normalizeDigits(String text) {
     for (var i = 0; i < 10; i++) {
       text = text
@@ -355,7 +434,8 @@ class LocalLedgerStore {
           e['minor'] <= 0 ||
           e['minor'] > maxMinor ||
           !name(e['description'], 500) ||
-          !date(e['occurred_at'])) {
+          !date(e['occurred_at']) ||
+          (e['category'] != null && !name(e['category'], 80))) {
         throw const FormatException('بيانات القيود غير صالحة');
       }
       final type = e['type'];

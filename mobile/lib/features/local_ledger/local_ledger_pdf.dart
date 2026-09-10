@@ -10,7 +10,7 @@ Future<Uint8List> localLedgerPdf(JsonMap doc, JsonMap customer) async {
   final pdf = pw.Document();
   var running = 0;
   final rows = <List<String>>[];
-  for (final e in doc['entries'] as List) {
+  for (final e in LocalLedgerStore.chronological(doc['entries'] as List)) {
     if (e['customer_id'] != customer['id']) continue;
     running += e['direction'] == 'debit'
         ? e['minor'] as int
@@ -19,8 +19,8 @@ Future<Uint8List> localLedgerPdf(JsonMap doc, JsonMap customer) async {
       LocalLedgerStore.money(running),
       e['direction'] == 'credit' ? LocalLedgerStore.money(e['minor']) : '-',
       e['direction'] == 'debit' ? LocalLedgerStore.money(e['minor']) : '-',
-      '${LocalLedgerStore.labels[e['type']]}: ${e['description']}',
-      (e['occurred_at'] as String).substring(0, 10),
+      '${LocalLedgerStore.labels[e['type']]}: ${e['description']}\nالتصنيف: ${e['category'] ?? 'غير مصنف'}',
+      LocalLedgerStore.localDate(e['occurred_at']),
     ]);
   }
   pdf.addPage(

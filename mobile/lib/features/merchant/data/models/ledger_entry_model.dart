@@ -11,6 +11,7 @@ class LedgerEntryModel {
   final String category; // 'goods', 'cash', 'service', 'transfer', 'other'
   final String paymentMethod; // 'cash', 'bank_transfer', 'cheque', 'offset'
   final String? referenceNumber;
+  final String? localCategoryLabel;
   final String? bankOrAgentName;
   final String? attachmentPath;
   final String description;
@@ -36,6 +37,7 @@ class LedgerEntryModel {
     this.category = 'goods',
     this.paymentMethod = 'cash',
     this.referenceNumber,
+    this.localCategoryLabel,
     this.bankOrAgentName,
     this.attachmentPath,
     required this.description,
@@ -63,6 +65,7 @@ class LedgerEntryModel {
       category: map['category'] as String? ?? 'goods',
       paymentMethod: map['payment_method'] as String? ?? 'cash',
       referenceNumber: map['reference_number'] as String?,
+      localCategoryLabel: map['local_category_label'] as String?,
       bankOrAgentName: map['bank_or_agent_name'] as String?,
       attachmentPath:
           (map['attachment_path'] ?? map['attachment_url']) as String?,
@@ -96,6 +99,7 @@ class LedgerEntryModel {
       'category': category,
       'payment_method': paymentMethod,
       'reference_number': referenceNumber,
+      'local_category_label': localCategoryLabel,
       'bank_or_agent_name': bankOrAgentName,
       'attachment_path': attachmentPath,
       'description': description,
