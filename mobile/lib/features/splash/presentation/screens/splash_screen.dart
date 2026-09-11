@@ -11,6 +11,7 @@ import '../../../../core/constants/app_constants.dart';
 import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../widgets/splash_background.dart';
 import '../widgets/splash_logo_badge.dart';
+import '../../../auth/presentation/customer_entry_mode.dart';
 
 /// الشاشة الافتتاحية الفاخرة لمنصة «مُثبَت | MUTHBAT»
 class SplashScreen extends ConsumerStatefulWidget {
@@ -23,13 +24,17 @@ class SplashScreen extends ConsumerStatefulWidget {
 class _SplashScreenState extends ConsumerState<SplashScreen> {
   bool _hasNavigated = false;
 
-  void _openCurrentAccount() {
+  void _openCurrentAccount() async {
     if (!mounted || _hasNavigated) return;
     _hasNavigated = true;
     final account = ref.read(authControllerProvider);
+    final customerMode =
+        account.userId != null &&
+        await CustomerEntryMode.selected(account.userId!);
+    if (!mounted) return;
     final route = account.status != AuthStatus.authenticated
         ? AppRoutes.localLedger
-        : account.userType == 'customer'
+        : account.userType == 'customer' || customerMode
         ? AppRoutes.customerHome
         : account.requiresBusinessSetup
         ? AppRoutes.businessSetup
@@ -97,8 +102,12 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     _hasNavigated = true;
 
     final authState = ref.read(authControllerProvider);
+    final customerMode =
+        authState.userId != null &&
+        await CustomerEntryMode.selected(authState.userId!);
+    if (!mounted) return;
     if (authState.status == AuthStatus.authenticated) {
-      if (authState.userType == 'customer') {
+      if (authState.userType == 'customer' || customerMode) {
         Navigator.pushReplacementNamed(context, AppRoutes.customerHome);
       } else if (authState.requiresBusinessSetup) {
         Navigator.pushReplacementNamed(context, AppRoutes.businessSetup);

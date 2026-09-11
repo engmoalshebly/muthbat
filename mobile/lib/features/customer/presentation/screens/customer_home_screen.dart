@@ -14,6 +14,7 @@ import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../../data/models/customer_summary_model.dart';
 import '../controllers/customer_controller.dart';
 import 'customer_account_ledger_screen.dart';
+import 'customer_balance_overview.dart';
 
 /// شاشة العميل الرئيسية — بيانات حقيقية من الخادم (customer_business_summary /
 /// customer_link_requests / ledger_timeline) بلا أي أرقام وهمية.
@@ -27,6 +28,7 @@ class CustomerHomeScreen extends ConsumerStatefulWidget {
 class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
   final currencyFormatter = NumberFormat('#,##0.##');
   final Set<String> _busyActions = {};
+  String _businessSearch = '';
 
   @override
   void initState() {
@@ -416,6 +418,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
       appBar: AppBar(
+        automaticallyImplyLeading: false,
         backgroundColor: AppColors.surfaceLight,
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
@@ -434,7 +437,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
                     ),
                   ),
                   Text(
-                    'حساب العميل الموحد',
+                    'حساب الزبون • بقالاتي ومديونياتي',
                     style: AppTypography.caption(
                       color: AppColors.textSecondary,
                     ),
@@ -445,21 +448,6 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
           ],
         ),
         actions: [
-          IconButton(
-            tooltip:
-                authState.userType == 'merchant' &&
-                    !authState.requiresBusinessSetup
-                ? 'متجري'
-                : 'إنشاء متجري',
-            icon: const Icon(Icons.storefront_outlined),
-            onPressed: () => Navigator.pushNamed(
-              context,
-              authState.userType == 'merchant' &&
-                      !authState.requiresBusinessSetup
-                  ? AppRoutes.merchantHome
-                  : AppRoutes.businessSetup,
-            ),
-          ),
           IconButton(
             tooltip: 'تسجيل الخروج',
             icon: const Icon(
@@ -675,7 +663,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildSummaryHeader(state),
+          CustomerBalanceOverview(summaries: state.summaries),
           const SizedBox(height: 20),
           if (state.linkRequests.isNotEmpty) ...[
             _buildLinkRequestsSection(state),
@@ -684,74 +672,6 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
           _buildBusinessesSection(state),
           const SizedBox(height: 32),
         ],
-      ),
-    );
-  }
-
-  /// بطاقة الملخص المالي المجمع — إجماليات مفصولة بالعملة (ممنوع جمع عملتين في رقم واحد)
-  Widget _buildSummaryHeader(CustomerHomeState state) {
-    // تجميع المستحق على العميل (الأرصدة الموجبة) لكل عملة على حدة
-    final Map<String, double> owedByCurrency = {};
-    for (final s in state.summaries) {
-      if (s.currentBalance > 0) {
-        owedByCurrency[s.currencyCode] =
-            (owedByCurrency[s.currencyCode] ?? 0.0) + s.currentBalance;
-      }
-    }
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-      decoration: const BoxDecoration(
-        color: AppColors.primaryDark,
-        borderRadius: BorderRadius.vertical(bottom: Radius.circular(18)),
-      ),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
-        ),
-        child: Column(
-          children: [
-            Text(
-              'إجمالي المبالغ المستحقة عليك لجميع المحلات',
-              style: AppTypography.caption(color: Colors.white70),
-            ),
-            const SizedBox(height: 8),
-            if (owedByCurrency.isEmpty)
-              const Text(
-                'لا توجد مبالغ مستحقة عليك 🎉',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w900,
-                  color: AppColors.paymentGreen,
-                ),
-              )
-            else
-              ...owedByCurrency.entries.map(
-                (e) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Text(
-                    '${currencyFormatter.format(e.value)} ${_currencySymbol(e.key)}',
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w900,
-                      color: AppColors.debtRed,
-                    ),
-                  ),
-                ),
-              ),
-            const SizedBox(height: 8),
-            Text(
-              state.summaries.isEmpty
-                  ? 'غير مرتبط بأي محل بعد'
-                  : 'مرتبط بـ ${state.summaries.map((s) => s.businessId).toSet().length} محل تجاري',
-              style: AppTypography.caption(color: AppColors.accentGold),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -867,6 +787,13 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
 
   /// قائمة المحلات المرتبطة الحقيقية
   Widget _buildBusinessesSection(CustomerHomeState state) {
+    final visible = state.summaries
+        .where(
+          (s) => s.businessName.toLowerCase().contains(
+            _businessSearch.trim().toLowerCase(),
+          ),
+        )
+        .toList();
     return Column(
       children: [
         Padding(
@@ -875,19 +802,37 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'سجلات المحلات المرتبطة',
+                'بقالاتي',
                 style: AppTypography.titleMedium(color: AppColors.textPrimary),
               ),
               Text(
                 state.summaries.isEmpty
                     ? 'لا يوجد'
-                    : '${state.summaries.length} محلات',
+                    : '${state.summaries.map((s) => s.businessId).toSet().length} بقالات',
                 style: AppTypography.caption(color: AppColors.textSecondary),
               ),
             ],
           ),
         ),
         const SizedBox(height: 12),
+        if (state.summaries.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: TextField(
+              decoration: const InputDecoration(
+                hintText: 'ابحث باسم البقالة',
+                prefixIcon: Icon(Icons.search),
+                filled: true,
+                fillColor: Colors.white,
+              ),
+              onChanged: (value) => setState(() => _businessSearch = value),
+            ),
+          ),
+        if (state.summaries.isNotEmpty && visible.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(20),
+            child: Text('لا توجد بقالة مطابقة للبحث'),
+          ),
         if (state.summaries.isEmpty)
           Padding(
             padding: const EdgeInsets.all(32),
@@ -916,7 +861,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Column(
-              children: state.summaries
+              children: visible
                   .map(
                     (summary) => Padding(
                       padding: const EdgeInsets.only(bottom: 12),

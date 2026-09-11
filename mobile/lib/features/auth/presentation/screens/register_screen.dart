@@ -11,10 +11,12 @@ import '../widgets/auth_text_field.dart';
 import '../widgets/country_code_picker.dart';
 import '../widgets/user_type_selector.dart';
 import '../validators/auth_validators.dart';
+import '../customer_entry_mode.dart';
 
 /// واجهة إنشاء حساب جديد لمنصة «مُثبَت | MUTHBAT»
 class RegisterScreen extends ConsumerStatefulWidget {
-  const RegisterScreen({super.key});
+  const RegisterScreen({super.key, this.customerMode = false});
+  final bool customerMode;
 
   @override
   ConsumerState<RegisterScreen> createState() => _RegisterScreenState();
@@ -27,7 +29,16 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final TextEditingController _confirmPasswordController =
       TextEditingController();
 
-  UserAccountType _selectedType = UserAccountType.merchant;
+  late UserAccountType _selectedType;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedType = widget.customerMode
+        ? UserAccountType.customer
+        : UserAccountType.merchant;
+  }
+
   CountryInfo _selectedCountry = supportedCountries[0];
   bool _agreedToTerms = false;
   bool _obscurePassword = true;
@@ -136,9 +147,21 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
     if (success && mounted) {
       final authState = ref.read(authControllerProvider);
+      if (authState.status == AuthStatus.authenticated &&
+          authState.userId != null) {
+        await CustomerEntryMode.remember(
+          authState.userId!,
+          _selectedType == UserAccountType.customer,
+        );
+        if (!mounted) return;
+      }
       Navigator.pushNamedAndRemoveUntil(
         context,
-        authState.requiresBusinessSetup
+        authState.status == AuthStatus.otpSent
+            ? AppRoutes.otp
+            : authState.userType == 'customer'
+            ? AppRoutes.customerHome
+            : authState.requiresBusinessSetup
             ? AppRoutes.businessSetup
             : AppRoutes.merchantHome,
         (route) => false,

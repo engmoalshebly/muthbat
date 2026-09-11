@@ -69,7 +69,8 @@ class AppRoutes {
         );
       case register:
         return MaterialPageRoute(
-          builder: (_) => const RegisterScreen(),
+          builder: (_) =>
+              RegisterScreen(customerMode: settings.arguments == 'customer'),
           settings: settings,
         );
       case otp:

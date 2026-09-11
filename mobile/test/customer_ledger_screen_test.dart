@@ -62,7 +62,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(repository.offsets, [0]);
       final older = find.text('تحميل حركات أقدم');
-      await tester.scrollUntilVisible(older, 600, maxScrolls: 30);
+      await tester.scrollUntilVisible(older, 600, maxScrolls: 30,
+        scrollable: find.descendant(of: find.byType(ListView), matching: find.byType(Scrollable)).first);
       await tester.pumpAndSettle();
       await tester.tap(older);
       await tester.pumpAndSettle();

@@ -7,6 +7,7 @@ import '../../data/customer_ledger_pdf.dart';
 import '../../../../shared/widgets/top_notice.dart';
 import '../../data/customer_repository.dart';
 import '../../data/customer_cache.dart';
+import 'customer_entry_details_screen.dart';
 import '../../data/models/customer_summary_model.dart';
 
 class CustomerAccountLedgerScreen extends ConsumerStatefulWidget {
@@ -32,6 +33,8 @@ class _CustomerAccountLedgerScreenState
   String? _error, _updated;
   int _offset = 0;
   bool _exporting = false;
+  String _filter = 'all';
+  String _query = '';
 
   Future<void> _exportPdf() async {
     if (_exporting || _busy || _rows.isEmpty || !_current) return;
@@ -170,6 +173,42 @@ class _CustomerAccountLedgerScreenState
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16),
           children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.summary.businessName,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      widget.summary.currentBalance > 0
+                          ? 'المتبقي عليك'
+                          : widget.summary.currentBalance < 0
+                          ? 'رصيد لك لدى البقالة'
+                          : 'الحساب مسدد',
+                    ),
+                    Text(
+                      '${formatter.format(widget.summary.currentBalance.abs())} ${widget.summary.currencyCode}',
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Text(
+                      'رصيد آخر ملخص محفوظ؛ يتحدث عند تحديث قائمة البقالات.',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ),
             OutlinedButton.icon(
               onPressed: _busy || _exporting || _rows.isEmpty
                   ? null
@@ -186,6 +225,33 @@ class _CustomerAccountLedgerScreenState
             const Text(
               'هذه قيود مالية وليست قائمة منتجات. تحميل المزيد يعرض الحركات الأقدم.',
             ),
+            const SizedBox(height: 12),
+            TextField(
+              decoration: const InputDecoration(
+                hintText: 'ابحث في وصف الحركات المحمّلة',
+                prefixIcon: Icon(Icons.search),
+              ),
+              onChanged: (value) =>
+                  setState(() => _query = value.trim().toLowerCase()),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final option in const {
+                  'all': 'الكل',
+                  'debt': 'الديون',
+                  'payment': 'الدفعات',
+                  'discount': 'الخصومات',
+                }.entries)
+                  ChoiceChip(
+                    label: Text(option.value),
+                    selected: _filter == option.key,
+                    onSelected: (_) => setState(() => _filter = option.key),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
             if (_updated != null)
               Text(
                 '${_cached ? 'نسخة محفوظة — قد تكون قديمة' : 'آخر تحديث'}: ${DateFormat('yyyy/MM/dd HH:mm').format(DateTime.parse(_updated!).toLocal())}',
@@ -205,35 +271,55 @@ class _CustomerAccountLedgerScreenState
                 padding: EdgeInsets.all(32),
                 child: Text('لا توجد حركات بهذه العملة.'),
               ),
-            ..._rows.map((row) {
-              final entry = CustomerPendingEntry.fromMap(row);
-              final reversed = row['is_reversed'] == true;
-              final status = switch (row['confirmation_status']) {
-                'confirmed' => 'مؤكدة',
-                'pending' => 'بانتظار التأكيد',
-                _ => 'غير متاح',
-              };
-              return Card(
-                child: ListTile(
-                  leading: Icon(
-                    entry.direction == 'debit'
-                        ? Icons.arrow_upward
-                        : Icons.arrow_downward,
-                  ),
-                  title: Text(
-                    '${types[entry.entryType] ?? entry.entryType} • ${formatter.format(entry.amount)} ${entry.currencyCode}',
-                  ),
-                  subtitle: Text(
-                    '${entry.description}\n${entry.occurredAt}\n${reversed ? 'معكوسة • ' : ''}$status${row['dispute_status'] == 'open'
-                        ? ' • اعتراض مفتوح'
-                        : row['dispute_status'] == 'resolved'
-                        ? ' • تمت معالجة الاعتراض'
-                        : ''}',
-                  ),
-                  isThreeLine: true,
-                ),
-              );
-            }),
+            ..._rows
+                .where(
+                  (row) =>
+                      (_filter == 'all' || row['entry_type'] == _filter) &&
+                      (row['description'] ?? '')
+                          .toString()
+                          .toLowerCase()
+                          .contains(_query),
+                )
+                .map((row) {
+                  final entry = CustomerPendingEntry.fromMap(row);
+                  final reversed = row['is_reversed'] == true;
+                  final status = switch (row['confirmation_status']) {
+                    'confirmed' => 'مؤكدة',
+                    'pending' => 'بانتظار التأكيد',
+                    _ => 'غير متاح',
+                  };
+                  return Card(
+                    child: ListTile(
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => CustomerEntryDetailsScreen(
+                            ownerId: _owner,
+                            businessName: widget.summary.businessName,
+                            entry: Map<String, dynamic>.from(row),
+                          ),
+                        ),
+                      ),
+                      trailing: const Icon(Icons.chevron_left),
+                      leading: Icon(
+                        entry.direction == 'debit'
+                            ? Icons.arrow_upward
+                            : Icons.arrow_downward,
+                      ),
+                      title: Text(
+                        '${types[entry.entryType] ?? entry.entryType} • ${formatter.format(entry.amount)} ${entry.currencyCode}',
+                      ),
+                      subtitle: Text(
+                        '${entry.description}\n${entry.occurredAt}\n${reversed ? 'معكوسة • ' : ''}$status${row['dispute_status'] == 'open'
+                            ? ' • اعتراض مفتوح'
+                            : row['dispute_status'] == 'resolved'
+                            ? ' • تمت معالجة الاعتراض'
+                            : ''}',
+                      ),
+                      isThreeLine: true,
+                    ),
+                  );
+                }),
             if (_busy) const Center(child: CircularProgressIndicator()),
             if (!_busy && _more && !_cached && _error == null)
               OutlinedButton(

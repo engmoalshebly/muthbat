@@ -11,6 +11,7 @@ import '../controllers/auth_controller.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/country_code_picker.dart';
 import '../validators/auth_validators.dart';
+import '../customer_entry_mode.dart';
 
 /// واجهة تسجيل الدخول الاحترافية لمنصة «مُثبَت | MUTHBAT»
 class LoginScreen extends ConsumerStatefulWidget {
@@ -25,6 +26,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
   CountryInfo _selectedCountry = supportedCountries[0];
   bool _obscurePassword = true;
+  bool _customerMode = true;
   String? _phoneError;
   String? _passwordError;
 
@@ -88,7 +90,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     if (success && mounted) {
       final authState = ref.read(authControllerProvider);
-      if (authState.userType == 'merchant') {
+      if (authState.userId != null) {
+        await CustomerEntryMode.remember(authState.userId!, _customerMode);
+      }
+      if (!mounted) return;
+      if (!_customerMode && authState.userType == 'merchant') {
         Navigator.pushNamedAndRemoveUntil(
           context,
           authState.requiresBusinessSetup
@@ -180,7 +186,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   ).animate().fadeIn(delay: 200.ms, duration: 400.ms),
                   const SizedBox(height: 6),
                   Text(
-                    'سجّل دخولك لإدارة دفترك المالي بكل أمان',
+                    _customerMode
+                        ? 'حساباتك ومديونيتك لدى البقالات، في مكان واحد'
+                        : 'دخول التاجر لإدارة نشاطه التجاري',
                     style: AppTypography.bodyMedium(color: Colors.white70),
                   ).animate().fadeIn(delay: 300.ms, duration: 400.ms),
 
@@ -220,6 +228,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
+                                  SegmentedButton<bool>(
+                                    segments: const [
+                                      ButtonSegment(
+                                        value: true,
+                                        label: Text('زبون'),
+                                        icon: Icon(Icons.person_outline),
+                                      ),
+                                      ButtonSegment(
+                                        value: false,
+                                        label: Text('تاجر'),
+                                        icon: Icon(Icons.storefront_outlined),
+                                      ),
+                                    ],
+                                    selected: {_customerMode},
+                                    onSelectionChanged: isLoading
+                                        ? null
+                                        : (value) => setState(
+                                            () => _customerMode = value.single,
+                                          ),
+                                  ),
+                                  const SizedBox(height: 16),
                                   // عنوان البطاقة
                                   Row(
                                     children: [
@@ -427,8 +456,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                       const SizedBox(width: 4),
                       GestureDetector(
-                        onTap: () =>
-                            Navigator.pushNamed(context, AppRoutes.register),
+                        onTap: () => Navigator.pushNamed(
+                          context,
+                          AppRoutes.register,
+                          arguments: _customerMode ? 'customer' : 'merchant',
+                        ),
                         child: Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 8,

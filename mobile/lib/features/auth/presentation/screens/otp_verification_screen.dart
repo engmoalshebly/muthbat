@@ -1,6 +1,7 @@
 import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../customer_entry_mode.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../app/router/app_routes.dart';
@@ -170,6 +171,14 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
                   onPressed: () async {
                     Navigator.pop(ctx);
                     final userType = ref.read(authControllerProvider).userType;
+                    final userId = ref.read(authControllerProvider).userId;
+                    if (userId != null) {
+                      await CustomerEntryMode.remember(
+                        userId,
+                        userType == 'customer',
+                      );
+                    }
+                    if (!mounted) return;
                     if (userType == 'customer') {
                       Navigator.pushNamedAndRemoveUntil(
                         context,

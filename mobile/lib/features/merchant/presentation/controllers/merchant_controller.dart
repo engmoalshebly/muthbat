@@ -1,5 +1,6 @@
 import 'dart:convert';
 import '../../../local_ledger/local_ledger_store.dart';
+import '../../../auth/presentation/controllers/auth_controller.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -168,8 +169,7 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
 
     try {
       // مصدر الحقيقة الوحيد — جلسة Supabase الحية (لا cached_user_id)
-      final currentUserId =
-          userId ?? AppDatabase.instance.accountId;
+      final currentUserId = userId ?? AppDatabase.instance.accountId;
 
       if (currentUserId == null || currentUserId.isEmpty) {
         state = state.copyWith(
@@ -183,7 +183,9 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
       Map<String, dynamic>? activeBiz;
       final notebook = await LocalLedgerStore.instance.current();
       String? preferredBusiness;
-      if (notebook != null && notebook['transfer_state'] == 'complete' && notebook['owner_id'] == currentUserId) {
+      if (notebook != null &&
+          notebook['transfer_state'] == 'complete' &&
+          notebook['owner_id'] == currentUserId) {
         preferredBusiness = notebook['server_business_id'] as String?;
       }
       activeBiz = await AppDatabase.instance.getBusinessByOwnerId(
@@ -191,10 +193,17 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
       );
       if (preferredBusiness != null && activeBiz?['id'] != preferredBusiness) {
         final db = await AppDatabase.instance.database;
-        final matches = await db.query('local_businesses', where: 'id = ? AND owner_user_id = ?', whereArgs: [preferredBusiness, currentUserId]);
+        final matches = await db.query(
+          'local_businesses',
+          where: 'id = ? AND owner_user_id = ?',
+          whereArgs: [preferredBusiness, currentUserId],
+        );
         activeBiz = matches.isEmpty ? null : matches.first;
       }
-      if (preferredBusiness == null) activeBiz ??= await AppDatabase.instance.getActiveBusiness(currentUserId);
+      if (preferredBusiness == null)
+        activeBiz ??= await AppDatabase.instance.getActiveBusiness(
+          currentUserId,
+        );
 
       // إذا لم يوجد في الكاش المحلي، نقوم بجلبه من Supabase مباشرة
       if (activeBiz == null) {
@@ -203,7 +212,8 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
               .from('businesses')
               .select()
               .eq('owner_user_id', currentUserId);
-          if (preferredBusiness != null) businessQuery = businessQuery.eq('id', preferredBusiness);
+          if (preferredBusiness != null)
+            businessQuery = businessQuery.eq('id', preferredBusiness);
           final serverBiz = await businessQuery.limit(1).maybeSingle();
           if (serverBiz != null) {
             final localServerBiz = Map<String, dynamic>.from(serverBiz);
@@ -690,6 +700,7 @@ final merchantRepositoryProvider = Provider<MerchantRepository>((ref) {
 
 final merchantControllerProvider =
     StateNotifierProvider<MerchantController, MerchantDashboardState>((ref) {
+      ref.watch(authControllerProvider.select((auth) => auth.userId));
       final repo = ref.watch(merchantRepositoryProvider);
       return MerchantController(repo);
     });
