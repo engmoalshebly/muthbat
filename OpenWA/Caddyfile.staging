@@ -5,7 +5,7 @@
 {$OPENWA_DOMAIN} {
   encode zstd gzip
 
-  @blocked path / /api/docs* /socket.io*
+  @blocked path /api/docs*
   respond @blocked 404
 
   reverse_proxy openwa-api:2785 {
