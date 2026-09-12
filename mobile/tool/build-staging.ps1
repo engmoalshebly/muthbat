@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+  [switch]$AllowDirectSignup
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -23,9 +25,16 @@ New-Item -ItemType Directory -Path $socketTemp -Force | Out-Null
 $env:JAVA_TOOL_OPTIONS = "-Djdk.net.unixdomain.tmpdir=$socketTemp"
 
 Set-Location $projectRoot
-& flutter build apk --release --no-pub `
-  "--dart-define=SUPABASE_URL=$($env:SUPABASE_URL.TrimEnd('/'))" `
-  "--dart-define=SUPABASE_ANON_KEY=$env:SUPABASE_ANON_KEY" `
+$flutterArgs = @(
+  'build', 'apk', '--release', '--no-pub',
+  "--dart-define=SUPABASE_URL=$($env:SUPABASE_URL.TrimEnd('/'))",
+  "--dart-define=SUPABASE_ANON_KEY=$env:SUPABASE_ANON_KEY",
   '--dart-define=APP_ENV=staging'
+)
+if ($AllowDirectSignup) {
+  Write-Warning 'Direct signup bypass is enabled in this build. Never distribute it.'
+  $flutterArgs += '--dart-define=ALLOW_STAGING_DIRECT_AUTH=true'
+}
+& flutter @flutterArgs
 
 exit $LASTEXITCODE

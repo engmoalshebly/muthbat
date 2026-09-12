@@ -1,37 +1,104 @@
-# بوابة إطلاق نسخة التجربة — صاحب البقالة
+# بوابة بيئة Staging
 
-لا تعتبر النسخة صالحة للتجربة المغلقة أو للإنتاج لمجرد نجاح البناء. يُنفّذ
-هذا الدليل على مشروع Supabase منفصل اسمه staging وبحسابات اختبار فقط.
+المرحلة لا تصبح جاهزة بمجرد نجاح الاختبارات المحلية. يلزم مشروع Supabase مستقل،
+مضيف OpenWA دائم، ورقما هاتف اختبار لا يحتويان بيانات حقيقية. لا تُنسخ أي أسرار
+بين staging والإنتاج.
 
-## 1. تجهيز البيئة
+## 1. ما جهزه المستودع
 
-1. أنشئ مشروع staging مختلفاً عن الإنتاج واربطه محلياً عبر `supabase link`.
-2. اضبط أسرار الدوال من `supabase/.env.example` بقيم staging حقيقية، خصوصاً
-   `PHONE_HMAC_KEY` و`PHONE_ENCRYPTION_KEY` و`WORKER_SECRET` وبيانات مزود واتساب.
-3. انشر الترحيلات والدوال، بما فيها `member-invite`:
+- `deploy/staging/deploy.sh`: يربط مشروع staging، يطبق جميع الترحيلات، يرفع
+  إعداد Auth وجميع الأسرار، وينشر كل Edge Functions التشغيلية.
+- النشر المعتاد **لا ينشر** `staging-direct-signup` ويشترط أن تكون قيمة
+  `ALLOW_STAGING_DIRECT_AUTH=false`.
+- `deploy/staging/verify-access.sh`: يفحص جاهزية OpenWA، رفض API بلا مفتاح،
+  تعطيل التسجيل المباشر، ومنع anon من قراءة المتاجر.
+- `OpenWA/docker-compose.staging.yml`: PostgreSQL دائم وملفات جلسة WhatsApp
+  على volume دائم، مع ربط API الخام على loopback فقط.
+- تطبيق staging يستخدم OTP افتراضياً. تجاوز OTP يحتاج علم بناء صريح
+  `ALLOW_STAGING_DIRECT_AUTH=true` إضافة إلى تفعيل الدالة خادمياً.
 
-```powershell
-supabase db push
-supabase functions deploy bootstrap-user-contact
-supabase functions deploy customer-directory
-supabase functions deploy member-invite
-supabase functions deploy generate-statement
-supabase functions deploy combine-statements
+## 2. إنشاء Supabase ونشره
+
+أنشئ مشروعاً جديداً من لوحة Supabase وسجل `project ref` ومفتاح anon فقط في
+مدير أسرارك. لا تضع service-role في التطبيق؛ Supabase يحقنه تلقائياً داخل Edge
+Functions المستضافة.
+
+```bash
+cd debt-ledger-supabase
+cp deploy/staging/.env.example deploy/staging/.env
+# املأ القيم الحقيقية، ثم:
+export SUPABASE_PROJECT_REF=xxxxxxxxxxxxxxxxxxxx
+deploy/staging/deploy.sh
 ```
 
-4. ابنِ APK staging مع `APP_ENV=staging` و`SUPABASE_URL` و`SUPABASE_ANON_KEY`
-   الخاصتين بالمشروع، ولا تستخدم عنواناً محلياً.
+ولّد القيم بدلاً من كتابتها يدوياً، مثال: `openssl rand -hex 32`. يجب أن يكون
+`PHONE_ENCRYPTION_KEY` مفتاح Base64 بطول 32 بايت (`openssl rand -base64 32`).
+اجعل `OPENWA_BASE_URL` عنوان HTTPS يمكن لـ Supabase الوصول إليه، ولا تستخدم
+localhost.
 
-## 2. اختبار قبول إلزامي
+## 3. تشغيل OpenWA بصورة دائمة
 
-نفّذ المسار على جهازين وحسابين مختلفين وسجّل النتيجة في طلب الإصدار:
+على مضيف Linux مخصص:
 
-1. يسجل صاحب البقالة، ينشئ البقالة، ويغلق الشبكة.
-2. يضيف عميلاً ويسجل ديناً، ثم يعيد الشبكة ويضغط مزامنة.
-3. تحقق في Supabase أن البقالة والعميل والقيد حصلوا على UUID خادمي وأن الطابور المحلي أصبح صفراً.
-4. أضف دفعة وخصماً وعكساً، وتحقق أن الرصيد والكشف يطابقان القيود لكل عملة منفصلة.
-5. أنشئ كشف PDF وافتحه من التطبيق، ثم تحقق من رمز التحقق العام.
-6. أنشئ حساب موظف برقم هاتفه، وأرسل الدعوة من البقالة بهذا الرقم، ثم اقبلها من جهاز الموظف.
-7. تحقق أن الموظف لا يتجاوز صلاحيات دوره، وأن مستخدم بقالة أخرى لا يرى عملاء أو كشوف البقالة الأولى.
+```bash
+cd OpenWA
+cp staging.env.example .env
+# استبدل كل replace-* وأبق المنافذ الخام على 127.0.0.1
+docker compose --profile postgres -f docker-compose.yml -f docker-compose.staging.yml up -d --build
+docker compose --profile postgres -f docker-compose.yml -f docker-compose.staging.yml ps
+```
 
-أي فشل في هذه القائمة هو **No-Go**. لا تنقل أسرار staging إلى الإنتاج؛ يعاد تنفيذ القائمة كاملة على الإنتاج بحسابات اختبار قبل فتح التسجيل العام.
+انشر `127.0.0.1:2785` عبر reverse proxy أو نفق خاص يدعم HTTPS. اسمح للعالم
+بالوصول إلى API فقط؛ يحمي `API_MASTER_KEY` نقاط الأعمال. لا تنشر dashboard:
+ادخل إليه عبر VPN أو SSH tunnel مثل
+`ssh -L 2785:127.0.0.1:2785 user@host`. أغلق 2785 و2886 و5432 في جدار
+الحماية العام، وعطّل Swagger في staging.
+
+أنشئ جلسة باسم قيمة `OPENWA_SESSION_ID`، امسح QR من هاتف الاختبار، وانتظر
+حالة connected. بعد ذلك أعد تشغيل الحاويات وتأكد أن الحالة بقيت connected؛
+الـ volume `openwa-data` يحفظ بيانات اعتماد WhatsApp و`postgres-data` يحفظ
+بيانات الخدمة.
+
+## 4. التسجيل المباشر الطارئ
+
+لا تستخدمه في اختبار قبول OTP. إن تعطل WhatsApp وكان مطلوباً مؤقتاً لاختبار
+وظائف أخرى فقط:
+
+```bash
+export SUPABASE_PROJECT_REF=xxxxxxxxxxxxxxxxxxxx
+CONFIRM_STAGING_BYPASS=ENABLE_TEMPORARILY deploy/staging/enable-direct-signup.sh
+# ابن تطبيقاً داخلياً بعلم ALLOW_STAGING_DIRECT_AUTH=true
+# وبعد الاختبار مباشرة:
+deploy/staging/disable-direct-signup.sh
+```
+
+## 5. اختبار القبول والحسابات
+
+أنشئ حساب التاجر والعميل عبر مسار OTP الحقيقي في التطبيق، لا من SQL ولا من
+service-role. سجّل أرقام الاختبار ومعرفات الحسابات في مدير الاختبار الخارجي،
+ولا تضف كلمات المرور أو الهواتف إلى Git.
+
+نفذ وسجّل التاريخ والنتيجة والدليل لكل بند:
+
+1. طلب OTP لكل حساب ووصول الرسالة فعلياً عبر WhatsApp.
+2. إدخال `000000` أو رمز خاطئ والتأكد من `invalid_otp` وعدم إنشاء حساب.
+3. طلب رمز جديد، الانتظار أكثر من خمس دقائق، والتأكد من رفضه كمنتهي.
+4. تكرار الطلب قبل 60 ثانية ثم تجاوز 5 طلبات للهاتف أو 10 للعنوان خلال ساعة؛
+   يجب ظهور HTTP 429 مع `Retry-After`.
+5. إدخال الرمز الصحيح مرة واحدة، ثم رفض إعادة استخدامه.
+6. إعادة تشغيل OpenWA والتأكد أن جلسة WhatsApp لا تطلب QR جديداً.
+7. تشغيل فحص الوصول:
+
+```bash
+export SUPABASE_URL=https://xxxxxxxxxxxxxxxxxxxx.supabase.co
+export SUPABASE_ANON_KEY=...
+export OPENWA_BASE_URL=https://openwa-api.staging.example.com
+export OPENWA_API_KEY=...
+deploy/staging/verify-access.sh
+```
+
+8. الدخول بالحسابين والتأكد أن العميل لا يرى بيانات التاجر وأن تاجراً آخر لا
+   يرى متاجر أو عملاء أو قيود غير تابعة له.
+
+أي فشل هو **No-Go**. احتفظ بلقطات/سجلات القبول خارج المستودع بعد إخفاء الهاتف
+والرموز والمفاتيح.

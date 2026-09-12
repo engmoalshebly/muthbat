@@ -278,7 +278,7 @@ class AuthController extends StateNotifier<AuthState> {
         return false;
       }
       final normalizedPhone = AuthValidators.normalizeE164(phone);
-      if (EnvConfig.isStaging) {
+      if (EnvConfig.allowStagingDirectAuth) {
         return await _registerDirectlyForStaging(
           name: name,
           phone: normalizedPhone,

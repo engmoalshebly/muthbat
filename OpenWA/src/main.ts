@@ -185,12 +185,14 @@ async function bootstrap() {
     .addTag('health', 'Health check endpoints')
     .build();
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  if (process.env.ENABLE_SWAGGER !== 'false') {
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
+  }
 
   // Serve static dashboard if built (Single Service Mode)
   const dashboardDistPath = path.resolve(process.cwd(), 'dashboard', 'dist');
-  if (fs.existsSync(dashboardDistPath)) {
+  if (process.env.DASHBOARD_ENABLED !== 'false' && fs.existsSync(dashboardDistPath)) {
     const expressApp = app.getHttpAdapter().getInstance() as express.Application;
     expressApp.use(express.static(dashboardDistPath));
     expressApp.use((req: express.Request, res: express.Response, next: express.NextFunction) => {

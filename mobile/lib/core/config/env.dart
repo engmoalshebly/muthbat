@@ -22,6 +22,10 @@ class EnvConfig {
     'ALLOW_LOCAL_RELEASE',
     defaultValue: false,
   );
+  static const bool _allowStagingDirectAuth = bool.fromEnvironment(
+    'ALLOW_STAGING_DIRECT_AUTH',
+    defaultValue: false,
+  );
 
   /// البيئة الفعلية المحسوبة من APP_ENV.
   static AppEnv get env {
@@ -38,6 +42,11 @@ class EnvConfig {
   static bool get isDev => env == AppEnv.dev;
   static bool get isStaging => env == AppEnv.staging;
   static bool get isProd => env == AppEnv.prod;
+
+  /// Emergency-only staging bypass. It is deliberately off unless the build
+  /// explicitly opts in; merely selecting staging must still exercise OTP.
+  static bool get allowStagingDirectAuth =>
+      isStaging && _allowStagingDirectAuth;
 
   /// يمنع شحن بناء إنتاجي موسوم بيئة تطوير.
   /// يُستدعى من [SupabaseConfig.init] قبل أي اتصال شبكي.

@@ -12,9 +12,9 @@ minimum_password_length = 8
 enabled = false
 enable_signup = false
 
-# Direct account creation is performed only by staging-direct-signup using the
-# service role. Enabling the phone provider here allows the resulting confirmed
-# user to obtain a normal password session without configuring SMS/OpenWA.
+# Account creation is performed by the OTP Edge Function using the service role.
+# The resulting confirmed user obtains a normal password session; GoTrue itself
+# never sends the WhatsApp message.
 [auth.sms]
 enable_signup = true
 enable_confirmations = true
