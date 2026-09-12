@@ -470,6 +470,16 @@ class MerchantProfileScreen extends ConsumerWidget {
                     ),
                     _buildSettingsDivider(),
                     _buildSettingsItem(
+                      icon: Icons.phonelink_lock_rounded,
+                      label: 'قفل التطبيق والبصمة',
+                      color: AppColors.primary,
+                      onTap: () => Navigator.pushNamed(
+                        context,
+                        AppRoutes.appLockSettings,
+                      ),
+                    ),
+                    _buildSettingsDivider(),
+                    _buildSettingsItem(
                       icon: AppIcons.profile,
                       label: 'اللغة',
                       color: AppColors.primaryLight,

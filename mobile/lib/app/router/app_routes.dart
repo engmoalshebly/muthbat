@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../features/app_lock/app_lock_settings_screen.dart';
 import '../../features/local_ledger/local_ledger_screen.dart';
 import '../../features/auth/presentation/screens/account_recovery_screen.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
@@ -43,6 +44,7 @@ class AppRoutes {
   static const String currencySettings = '/currency-settings';
   static const String businessProfileEdit = '/business-profile-edit';
   static const String resetPassword = '/reset-password';
+  static const String appLockSettings = '/app-lock-settings';
 
   static Route<dynamic> _errorRoute(String message) {
     return MaterialPageRoute(
@@ -52,6 +54,11 @@ class AppRoutes {
 
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
     switch (settings.name) {
+      case appLockSettings:
+        return MaterialPageRoute(
+          builder: (_) => const AppLockSettingsScreen(),
+          settings: settings,
+        );
       case localLedger:
         return MaterialPageRoute(
           builder: (_) => const LocalLedgerScreen(),

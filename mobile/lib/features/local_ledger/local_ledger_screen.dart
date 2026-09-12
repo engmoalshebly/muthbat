@@ -748,6 +748,11 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                   await activateCloud();
                 } else if (v == 'account') {
                   await openAccount();
+                } else if (v == 'lock' && mounted) {
+                  await Navigator.pushNamed(
+                    context,
+                    AppRoutes.appLockSettings,
+                  );
                 }
               }),
               itemBuilder: (_) => const [
@@ -762,6 +767,10 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                 PopupMenuItem(
                   value: 'account',
                   child: Text('فتح حسابي السحابي'),
+                ),
+                PopupMenuItem(
+                  value: 'lock',
+                  child: Text('قفل التطبيق والبصمة'),
                 ),
               ],
             ),

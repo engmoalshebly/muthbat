@@ -47,5 +47,7 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>لفتح قفل التطبيق بسرعة بدل كتابة رمز القفل في كل مرة.</string>
 </dict>
 </plist>

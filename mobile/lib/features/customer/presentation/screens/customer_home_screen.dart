@@ -449,6 +449,17 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
         ),
         actions: [
           IconButton(
+            tooltip: 'قفل التطبيق والبصمة',
+            icon: const Icon(
+              Icons.phonelink_lock_rounded,
+              color: AppColors.textSecondary,
+            ),
+            onPressed: () => Navigator.pushNamed(
+              context,
+              AppRoutes.appLockSettings,
+            ),
+          ),
+          IconButton(
             tooltip: 'تسجيل الخروج',
             icon: const Icon(
               Icons.logout_rounded,

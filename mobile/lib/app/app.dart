@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/constants/app_constants.dart';
+import '../features/app_lock/app_lock_overlay.dart';
 import 'router/app_routes.dart';
 import 'theme/app_theme.dart';
 
@@ -35,6 +36,10 @@ class MuthbatApp extends ConsumerWidget {
       // التوجيه
       initialRoute: AppRoutes.splash,
       onGenerateRoute: AppRoutes.onGenerateRoute,
+
+      // قفل التطبيق يعلو كل الشاشات، لا يحتاج مساراً خاصاً به.
+      builder: (context, child) =>
+          AppLockOverlay(child: child ?? const SizedBox.shrink()),
     );
   }
 }

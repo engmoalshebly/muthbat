@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:muthbat/app/app.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:muthbat/core/database/app_database.dart';
@@ -14,6 +15,7 @@ void main() {
     'MuthbatApp boots into local notebook without Supabase or an account',
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({});
+      FlutterSecureStorage.setMockInitialValues({});
       sqfliteFfiInit();
       AppDatabase.debugDatabaseFactory = databaseFactoryFfi;
       LocalLedgerStore.debugDatabaseFactory = databaseFactoryFfi;
