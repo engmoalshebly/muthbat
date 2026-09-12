@@ -2836,7 +2836,7 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
             child: ListView.separated(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               itemCount: filtered.length,
-              separatorBuilder: (_, __) => const Divider(height: 1, indent: 60),
+              separatorBuilder: (_, _) => const Divider(height: 1, indent: 60),
               itemBuilder: (ctx, idx) {
                 final customer = filtered[idx];
                 return ListTile(

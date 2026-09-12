@@ -303,8 +303,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                       ),
                                     ),
                                     onChanged: (_) {
-                                      if (_phoneError != null)
+                                      if (_phoneError != null) {
                                         setState(() => _phoneError = null);
+                                      }
                                     },
                                   ),
 
@@ -353,8 +354,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                       ),
                                     ),
                                     onChanged: (_) {
-                                      if (_passwordError != null)
+                                      if (_passwordError != null) {
                                         setState(() => _passwordError = null);
+                                      }
                                     },
                                   ),
 

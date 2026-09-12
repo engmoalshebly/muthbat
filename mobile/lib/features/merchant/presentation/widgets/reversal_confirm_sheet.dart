@@ -20,7 +20,8 @@ class ReversalConfirmSheet extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<ReversalConfirmSheet> createState() => _ReversalConfirmSheetState();
+  ConsumerState<ReversalConfirmSheet> createState() =>
+      _ReversalConfirmSheetState();
 }
 
 class _ReversalConfirmSheetState extends ConsumerState<ReversalConfirmSheet> {
@@ -39,14 +40,16 @@ class _ReversalConfirmSheetState extends ConsumerState<ReversalConfirmSheet> {
 
     setState(() => _isSubmitting = true);
 
-    final success = await ref.read(merchantControllerProvider.notifier).reverseEntry(
-      originalEntryId: widget.entry.id,
-      businessCustomerId: widget.businessCustomerId,
-      originalEntryType: widget.entry.entryType,
-      originalDirection: widget.entry.direction,
-      originalAmount: widget.entry.amount,
-      reason: _reasonController.text.trim(),
-    );
+    final success = await ref
+        .read(merchantControllerProvider.notifier)
+        .reverseEntry(
+          originalEntryId: widget.entry.id,
+          businessCustomerId: widget.businessCustomerId,
+          originalEntryType: widget.entry.entryType,
+          originalDirection: widget.entry.direction,
+          originalAmount: widget.entry.amount,
+          reason: _reasonController.text.trim(),
+        );
 
     if (mounted) {
       setState(() => _isSubmitting = false);
@@ -115,7 +118,9 @@ class _ReversalConfirmSheetState extends ConsumerState<ReversalConfirmSheet> {
                 decoration: BoxDecoration(
                   color: AppColors.warningLight,
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.warning.withValues(alpha: 0.3)),
+                  border: Border.all(
+                    color: AppColors.warning.withValues(alpha: 0.3),
+                  ),
                 ),
                 child: Column(
                   children: [
@@ -134,12 +139,16 @@ class _ReversalConfirmSheetState extends ConsumerState<ReversalConfirmSheet> {
                     const SizedBox(height: 12),
                     Text(
                       'عكس قيد مالي',
-                      style: AppTypography.titleMedium(color: AppColors.textPrimary),
+                      style: AppTypography.titleMedium(
+                        color: AppColors.textPrimary,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       'هذا الإجراء سينشئ قيداً معاكساً يلغي أثر العملية الأصلية.\nلا يمكن التراجع عن هذا الإجراء.',
-                      style: AppTypography.caption(color: AppColors.textSecondary),
+                      style: AppTypography.caption(
+                        color: AppColors.textSecondary,
+                      ),
                       textAlign: TextAlign.center,
                     ),
                   ],
@@ -160,7 +169,9 @@ class _ReversalConfirmSheetState extends ConsumerState<ReversalConfirmSheet> {
                   children: [
                     Text(
                       'القيد الأصلي المراد عكسه',
-                      style: AppTypography.caption(color: AppColors.textSecondary),
+                      style: AppTypography.caption(
+                        color: AppColors.textSecondary,
+                      ),
                     ),
                     const SizedBox(height: 10),
                     Row(
@@ -172,7 +183,9 @@ class _ReversalConfirmSheetState extends ConsumerState<ReversalConfirmSheet> {
                             children: [
                               Text(
                                 widget.entry.description,
-                                style: AppTypography.titleSmall(color: AppColors.textPrimary),
+                                style: AppTypography.titleSmall(
+                                  color: AppColors.textPrimary,
+                                ),
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -181,14 +194,19 @@ class _ReversalConfirmSheetState extends ConsumerState<ReversalConfirmSheet> {
                                 DateFormat('yyyy/MM/dd - hh:mm a').format(
                                   DateTime.parse(widget.entry.occurredAt),
                                 ),
-                                style: AppTypography.caption(color: AppColors.textSecondary),
+                                style: AppTypography.caption(
+                                  color: AppColors.textSecondary,
+                                ),
                               ),
                             ],
                           ),
                         ),
                         const SizedBox(width: 12),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 8,
+                          ),
                           decoration: BoxDecoration(
                             color: isDebt
                                 ? AppColors.debtRed.withValues(alpha: 0.1)
@@ -200,7 +218,9 @@ class _ReversalConfirmSheetState extends ConsumerState<ReversalConfirmSheet> {
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w800,
-                              color: isDebt ? AppColors.debtRed : AppColors.paymentGreen,
+                              color: isDebt
+                                  ? AppColors.debtRed
+                                  : AppColors.paymentGreen,
                             ),
                           ),
                         ),
@@ -218,7 +238,10 @@ class _ReversalConfirmSheetState extends ConsumerState<ReversalConfirmSheet> {
                 decoration: InputDecoration(
                   labelText: 'سبب العكس *',
                   hintText: 'مثال: خطأ في المبلغ / تسجيل مكرر / إلغاء الصفقة',
-                  prefixIcon: const Icon(Icons.edit_note_rounded, color: AppColors.textSecondary),
+                  prefixIcon: const Icon(
+                    Icons.edit_note_rounded,
+                    color: AppColors.textSecondary,
+                  ),
                   filled: true,
                   fillColor: AppColors.backgroundLight,
                   border: OutlineInputBorder(
@@ -227,8 +250,12 @@ class _ReversalConfirmSheetState extends ConsumerState<ReversalConfirmSheet> {
                   ),
                 ),
                 validator: (val) {
-                  if (val == null || val.trim().isEmpty) return 'يرجى كتابة سبب العكس';
-                  if (val.trim().length < 3) return 'السبب يجب أن يكون 3 أحرف على الأقل';
+                  if (val == null || val.trim().isEmpty) {
+                    return 'يرجى كتابة سبب العكس';
+                  }
+                  if (val.trim().length < 3) {
+                    return 'السبب يجب أن يكون 3 أحرف على الأقل';
+                  }
                   return null;
                 },
               ),
@@ -249,7 +276,9 @@ class _ReversalConfirmSheetState extends ConsumerState<ReversalConfirmSheet> {
                 onPressed: () => Navigator.pop(context),
                 child: Text(
                   'إلغاء',
-                  style: AppTypography.bodyMedium(color: AppColors.textSecondary),
+                  style: AppTypography.bodyMedium(
+                    color: AppColors.textSecondary,
+                  ),
                 ),
               ),
             ],

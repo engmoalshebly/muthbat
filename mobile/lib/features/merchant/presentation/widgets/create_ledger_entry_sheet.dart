@@ -629,18 +629,22 @@ class _CreateLedgerEntrySheetState
         if (val == null || val.trim().isEmpty) return 'يرجى إدخال المبلغ';
         final parsedMoney = Money.tryParse(val.trim());
         final parsed = parsedMoney?.toDouble();
-        if (parsed != null && !parsed.isFinite)
+        if (parsed != null && !parsed.isFinite) {
           return 'Ø§Ù„Ù…Ø¨Ù„Øº ØºÙŠØ± ØµØ§Ù„Ø­';
-        if (parsed != null && parsed > 9999999999999999.9999)
+        }
+        if (parsed != null && parsed > 9999999999999999.9999) {
           return 'Ø§Ù„Ù…Ø¨Ù„Øº Ø£ÙƒØ¨Ø± Ù…Ù† Ø§Ù„Ø­Ø¯ Ø§Ù„Ù…Ø³Ù…ÙˆØ­';
+        }
         final normalized = val.trim().replaceAll(',', '.');
         final fraction = normalized.contains('.')
             ? normalized.split('.').last
             : '';
-        if (fraction.length > 4)
+        if (fraction.length > 4) {
           return 'ÙŠØ³Ù…Ø­ Ø¨Ø£Ø±Ø¨Ø¹ Ù…Ù†Ø§Ø²Ù„ Ø¹Ø´Ø±ÙŠØ© ÙƒØ­Ø¯ Ø£Ù‚ØµÙ‰';
-        if (parsed == null || parsed <= 0)
+        }
+        if (parsed == null || parsed <= 0) {
           return 'يرجى إدخال رقم صحيح أكبر من الصفر';
+        }
         return null;
       },
     );

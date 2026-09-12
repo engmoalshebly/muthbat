@@ -1,6 +1,8 @@
 /// عقد RPC المركزي لميزة التاجر — المصدر الوحيد لأسماء الدوال ومفاتيح الحمولات.
 ///
 /// المرجع الملزم: `fix-plan/02-rpc-contract.md` §1.1 (العقد الموحد v1)
+library;
+
 import '../../../../core/finance/money.dart';
 
 /// وقرارات `fix-plan.md` (القرار 1: لا يُرسل العميل p_currency_code؛

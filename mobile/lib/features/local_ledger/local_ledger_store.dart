@@ -137,8 +137,9 @@ class LocalLedgerStore {
             occurredAt?.toUtc().toIso8601String(),
             category?.trim(),
           ]);
-          if (existing['request_payload'] != fingerprint)
+          if (existing['request_payload'] != fingerprint) {
             throw StateError('تغيّرت بيانات طلب محفوظ؛ افتح عملية جديدة');
+          }
           return existing['customer_id'] as String;
         }
       }
@@ -179,7 +180,7 @@ class LocalLedgerStore {
       }
       (doc['entries'] as List).add({
         'id': _uuid.v4(),
-        if (requestId != null) 'request_id': requestId,
+        'request_id': ?requestId,
         if (requestId != null)
           'request_payload': jsonEncode([
             customerId,
@@ -322,8 +323,9 @@ class LocalLedgerStore {
   };
   static String? descriptionError(String value) {
     if (value.trim().isEmpty) return 'أدخل وصف العملية قبل الحفظ';
-    if (value.trim().length < 2 || value.trim().length > 500)
+    if (value.trim().length < 2 || value.trim().length > 500) {
       return 'وصف العملية من حرفين إلى 500 حرف';
+    }
     return null;
   }
 

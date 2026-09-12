@@ -118,7 +118,7 @@ class MerchantRepository {
         await client
             .from('businesses')
             .update({
-              if (logoPath != null) 'logo_path': logoPath,
+              'logo_path': ?logoPath,
               if (contactPhoneDisplay?.trim().isNotEmpty ?? false)
                 'contact_phone_display': contactPhoneDisplay!.trim(),
             })
@@ -404,8 +404,8 @@ class MerchantRepository {
       'businessId': businessId,
       if (trimmedPhone.isNotEmpty) 'phone': trimmedPhone,
       'localDisplayName': localDisplayName.trim(),
-      if (creditLimit != null) 'creditLimit': creditLimit,
-      if (defaultDueDays != null) 'defaultDueDays': defaultDueDays,
+      'creditLimit': ?creditLimit,
+      'defaultDueDays': ?defaultDueDays,
       'requestLink': trimmedPhone.isNotEmpty,
       'localCustomerId': localId,
     };
@@ -452,8 +452,8 @@ class MerchantRepository {
         'local_business_customers',
         {
           'id': serverBusinessCustomerId,
-          if (serverCustomerId != null) 'customer_id': serverCustomerId,
-          if (linkStatus != null) 'link_status': linkStatus,
+          'customer_id': ?serverCustomerId,
+          'link_status': ?linkStatus,
           'sync_status': 'synced',
           'updated_at': now,
         },

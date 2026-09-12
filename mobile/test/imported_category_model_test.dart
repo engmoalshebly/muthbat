@@ -1,13 +1,19 @@
 import 'package:flutter_test/flutter_test.dart';
-import '../lib/features/merchant/data/models/ledger_entry_model.dart';
+import 'package:muthbat/features/merchant/data/models/ledger_entry_model.dart';
 
 void main() {
   test('custom imported category survives cache serialization', () {
     const entry = LedgerEntryModel(
-      id: 'entry', businessId: 'business', businessCustomerId: 'customer',
-      entryType: 'debt', direction: 'debit', amount: 25,
-      description: 'مواد غذائية', occurredAt: '2026-09-10T08:00:00Z',
-      clientRequestId: 'request', localCategoryLabel: 'مشتريات المنزل',
+      id: 'entry',
+      businessId: 'business',
+      businessCustomerId: 'customer',
+      entryType: 'debt',
+      direction: 'debit',
+      amount: 25,
+      description: 'مواد غذائية',
+      occurredAt: '2026-09-10T08:00:00Z',
+      clientRequestId: 'request',
+      localCategoryLabel: 'مشتريات المنزل',
     );
     final restored = LedgerEntryModel.fromMap(entry.toMap());
     expect(restored.localCategoryLabel, 'مشتريات المنزل');

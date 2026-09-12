@@ -239,11 +239,13 @@ class SyncEngine {
   Future<void> triggerSync() async {
     if (_isProcessing || _paused) return;
     if (Supabase.instance.client.auth.currentSession == null ||
-        Supabase.instance.client.auth.currentSession!.isExpired)
+        Supabase.instance.client.auth.currentSession!.isExpired) {
       return;
+    }
     if (AppDatabase.instance.accountId !=
-        Supabase.instance.client.auth.currentUser?.id)
+        Supabase.instance.client.auth.currentUser?.id) {
       return;
+    }
     _isProcessing = true;
     _drained = Completer<void>();
 

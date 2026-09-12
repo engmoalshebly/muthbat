@@ -138,11 +138,13 @@ class _InviteMemberSheetState extends ConsumerState<InviteMemberSheet> {
                   ),
                 ),
                 validator: (val) {
-                  if (val == null || val.trim().isEmpty)
+                  if (val == null || val.trim().isEmpty) {
                     return 'يرجى إدخال رقم هاتف الموظف';
+                  }
                   final digits = val.replaceAll(RegExp(r'[^0-9]'), '');
-                  if (digits.length < 9 || digits.length > 15)
+                  if (digits.length < 9 || digits.length > 15) {
                     return 'رقم الهاتف غير صالح';
+                  }
                   return null;
                 },
               ),
@@ -155,31 +157,41 @@ class _InviteMemberSheetState extends ConsumerState<InviteMemberSheet> {
               const SizedBox(height: 10),
 
               // خيارات الأدوار الثلاثة
-              _buildRoleOption(
-                role: 'accountant',
-                title: 'محاسب مالي',
-                subtitle:
-                    'تسجيل القيود والديون، السدادات، الخصومات، وإصدار الكشوفات.',
-                icon: Icons.calculate_outlined,
-                color: AppColors.primary,
-              ),
-              const SizedBox(height: 8),
-              _buildRoleOption(
-                role: 'collector',
-                title: 'محصّل ميداني',
-                subtitle:
-                    'تسجيل استلام الدفعات المالية ومتابعة حسابات العملاء.',
-                icon: Icons.payments_outlined,
-                color: AppColors.paymentGreen,
-              ),
-              const SizedBox(height: 8),
-              _buildRoleOption(
-                role: 'admin',
-                title: 'مدير النظام',
-                subtitle:
-                    'صلاحيات كاملة لإدارة الحسابات، التقارير، ودعوة موظفين.',
-                icon: Icons.admin_panel_settings_outlined,
-                color: AppColors.accentGoldDark,
+              RadioGroup<String>(
+                groupValue: _selectedRole,
+                onChanged: (value) {
+                  if (value != null) setState(() => _selectedRole = value);
+                },
+                child: Column(
+                  children: [
+                    _buildRoleOption(
+                      role: 'accountant',
+                      title: 'محاسب مالي',
+                      subtitle:
+                          'تسجيل القيود والديون، السدادات، الخصومات، وإصدار الكشوفات.',
+                      icon: Icons.calculate_outlined,
+                      color: AppColors.primary,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildRoleOption(
+                      role: 'collector',
+                      title: 'محصّل ميداني',
+                      subtitle:
+                          'تسجيل استلام الدفعات المالية ومتابعة حسابات العملاء.',
+                      icon: Icons.payments_outlined,
+                      color: AppColors.paymentGreen,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildRoleOption(
+                      role: 'admin',
+                      title: 'مدير النظام',
+                      subtitle:
+                          'صلاحيات كاملة لإدارة الحسابات، التقارير، ودعوة موظفين.',
+                      icon: Icons.admin_panel_settings_outlined,
+                      color: AppColors.accentGoldDark,
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(height: 24),
 
@@ -255,14 +267,7 @@ class _InviteMemberSheetState extends ConsumerState<InviteMemberSheet> {
                 ],
               ),
             ),
-            Radio<String>(
-              value: role,
-              groupValue: _selectedRole,
-              activeColor: color,
-              onChanged: (val) {
-                if (val != null) setState(() => _selectedRole = val);
-              },
-            ),
+            Radio<String>(value: role, activeColor: color),
           ],
         ),
       ),

@@ -200,10 +200,11 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
         );
         activeBiz = matches.isEmpty ? null : matches.first;
       }
-      if (preferredBusiness == null)
+      if (preferredBusiness == null) {
         activeBiz ??= await AppDatabase.instance.getActiveBusiness(
           currentUserId,
         );
+      }
 
       // إذا لم يوجد في الكاش المحلي، نقوم بجلبه من Supabase مباشرة
       if (activeBiz == null) {
@@ -212,8 +213,9 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
               .from('businesses')
               .select()
               .eq('owner_user_id', currentUserId);
-          if (preferredBusiness != null)
+          if (preferredBusiness != null) {
             businessQuery = businessQuery.eq('id', preferredBusiness);
+          }
           final serverBiz = await businessQuery.limit(1).maybeSingle();
           if (serverBiz != null) {
             final localServerBiz = Map<String, dynamic>.from(serverBiz);

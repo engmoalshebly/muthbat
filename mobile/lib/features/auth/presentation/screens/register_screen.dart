@@ -429,8 +429,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                                         : 'مثال: محمد علي أحمد',
                                     errorText: _nameError,
                                     onChanged: (_) {
-                                      if (_nameError != null)
+                                      if (_nameError != null) {
                                         setState(() => _nameError = null);
+                                      }
                                     },
                                   ),
 
@@ -455,8 +456,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                                       ),
                                     ),
                                     onChanged: (_) {
-                                      if (_phoneError != null)
+                                      if (_phoneError != null) {
                                         setState(() => _phoneError = null);
+                                      }
                                     },
                                   ),
 
@@ -500,8 +502,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                                     ),
                                     onChanged: (_) {
                                       setState(() {});
-                                      if (_passwordError != null)
+                                      if (_passwordError != null) {
                                         setState(() => _passwordError = null);
+                                      }
                                     },
                                   ),
 
@@ -579,10 +582,11 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                                       ),
                                     ),
                                     onChanged: (_) {
-                                      if (_confirmPasswordError != null)
+                                      if (_confirmPasswordError != null) {
                                         setState(
                                           () => _confirmPasswordError = null,
                                         );
+                                      }
                                     },
                                   ),
 

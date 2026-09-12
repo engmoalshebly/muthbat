@@ -266,7 +266,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
             ),
             const Text(
               'دفتر الحساب والذمم المالية',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 10,
                 color: AppColors.textSecondary,
                 fontWeight: FontWeight.w500,
@@ -286,7 +286,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                     customer: _customer,
                     recentEntries: _entries,
                   );
-              if (!sent && mounted) {
+              if (!sent && context.mounted) {
                 TopNotice.of(context).showSnackBar(
                   const SnackBar(
                     content: Text(
@@ -596,8 +596,9 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                     if (entry.category == 'goods') categoryLabel = '📦 بضاعة';
                     if (entry.category == 'cash') categoryLabel = '💵 نقد';
                     if (entry.category == 'service') categoryLabel = '🛠️ خدمة';
-                    if (entry.category == 'transfer')
+                    if (entry.category == 'transfer') {
                       categoryLabel = '🔄 حوالة';
+                    }
 
                     String paymentLabel = '';
                     if (entry.paymentMethod == 'bank_transfer') {
@@ -1426,14 +1427,14 @@ class _LedgerEntryDetailsSheet extends StatelessWidget {
             height: height,
             width: double.infinity,
             fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => _imageErrorWidget(),
+            errorBuilder: (_, _, _) => _imageErrorWidget(),
           )
         : Image.file(
             File(_attachmentPath),
             height: height,
             width: double.infinity,
             fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => _imageErrorWidget(),
+            errorBuilder: (_, _, _) => _imageErrorWidget(),
           );
     return image;
   }

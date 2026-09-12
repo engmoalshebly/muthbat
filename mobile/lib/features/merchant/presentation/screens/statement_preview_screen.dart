@@ -127,6 +127,7 @@ class StatementPreviewScreen extends StatelessWidget {
         ),
       );
     } catch (error) {
+      if (!context.mounted) return;
       _showPdfError(context, error);
     }
   }

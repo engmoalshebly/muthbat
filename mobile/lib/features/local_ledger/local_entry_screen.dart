@@ -132,7 +132,7 @@ class _LocalEntryScreenState extends State<LocalEntryScreen> {
       );
       if (mounted) Navigator.pop(context, id);
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           error = e is FormatException
               ? e.message
@@ -141,6 +141,7 @@ class _LocalEntryScreenState extends State<LocalEntryScreen> {
               : 'تعذر الحفظ. بيانات النموذج محفوظة؛ أعد المحاولة.';
           saving = false;
         });
+      }
     }
   }
 
@@ -247,7 +248,7 @@ class _LocalEntryScreenState extends State<LocalEntryScreen> {
                                   firstDate: DateTime(1900),
                                   lastDate: DateTime.now(),
                                 );
-                                if (chosen != null && mounted)
+                                if (chosen != null && mounted) {
                                   setState(
                                     () => occurredAt = DateTime(
                                       chosen.year,
@@ -257,6 +258,7 @@ class _LocalEntryScreenState extends State<LocalEntryScreen> {
                                       occurredAt.minute,
                                     ),
                                   );
+                                }
                               },
                         icon: const Icon(Icons.calendar_today_outlined),
                         label: Text(

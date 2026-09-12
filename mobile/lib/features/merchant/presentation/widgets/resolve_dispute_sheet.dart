@@ -139,28 +139,42 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
               const SizedBox(height: 20),
 
               // خيارات القرار الثلاثة
-              _buildResolutionOption(
-                value: 'accepted',
-                title: 'قبول الاعتراض بالكامل',
-                subtitle: 'سيتم عكس القيد الأصلي بالكامل وإلغاؤه من الذمة.',
-                icon: Icons.check_circle_outline_rounded,
-                color: AppColors.success,
-              ),
-              const SizedBox(height: 8),
-              _buildResolutionOption(
-                value: 'partially_accepted',
-                title: 'قبول جزئي (تصحيح المبلغ)',
-                subtitle: 'عكس القيد وإعادة تسجيله بالمبلغ الصحيح المتفق عليه.',
-                icon: Icons.published_with_changes_rounded,
-                color: AppColors.accentGoldDark,
-              ),
-              const SizedBox(height: 8),
-              _buildResolutionOption(
-                value: 'rejected',
-                title: 'رفض الاعتراض',
-                subtitle: 'الإبقاء على القيد كما هو مسجل دون تعديل.',
-                icon: Icons.cancel_outlined,
-                color: AppColors.debtRed,
+              RadioGroup<String>(
+                groupValue: _selectedResolution,
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() => _selectedResolution = value);
+                  }
+                },
+                child: Column(
+                  children: [
+                    _buildResolutionOption(
+                      value: 'accepted',
+                      title: 'قبول الاعتراض بالكامل',
+                      subtitle:
+                          'سيتم عكس القيد الأصلي بالكامل وإلغاؤه من الذمة.',
+                      icon: Icons.check_circle_outline_rounded,
+                      color: AppColors.success,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildResolutionOption(
+                      value: 'partially_accepted',
+                      title: 'قبول جزئي (تصحيح المبلغ)',
+                      subtitle:
+                          'عكس القيد وإعادة تسجيله بالمبلغ الصحيح المتفق عليه.',
+                      icon: Icons.published_with_changes_rounded,
+                      color: AppColors.accentGoldDark,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildResolutionOption(
+                      value: 'rejected',
+                      title: 'رفض الاعتراض',
+                      subtitle: 'الإبقاء على القيد كما هو مسجل دون تعديل.',
+                      icon: Icons.cancel_outlined,
+                      color: AppColors.debtRed,
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(height: 20),
 
@@ -180,7 +194,7 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
                   decoration: InputDecoration(
                     labelText: 'المبلغ الصحيح المستحق *',
                     hintText: '0.00',
-                    suffixText: '${ref.read(merchantControllerProvider).currency}',
+                    suffixText: ref.read(merchantControllerProvider).currency,
                     filled: true,
                     fillColor: AppColors.backgroundLight,
                     border: OutlineInputBorder(
@@ -191,11 +205,13 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
                     ),
                   ),
                   validator: (val) {
-                    if (val == null || val.trim().isEmpty)
+                    if (val == null || val.trim().isEmpty) {
                       return 'يرجى إدخال المبلغ المصحح';
+                    }
                     final parsed = Money.tryParse(val.trim())?.toDouble();
-                    if (parsed == null || parsed <= 0)
+                    if (parsed == null || parsed <= 0) {
                       return 'المبلغ يجب أن يكون أكبر من 0';
+                    }
                     if (origAmount > 0 && parsed >= origAmount) {
                       return 'المبلغ المصحح يجب أن يكون أقل من المبلغ الأصلي ($origAmount)';
                     }
@@ -224,8 +240,9 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
                   ),
                 ),
                 validator: (val) {
-                  if (val == null || val.trim().isEmpty)
+                  if (val == null || val.trim().isEmpty) {
                     return 'يرجى كتابة ملاحظة توضيحية للقرار';
+                  }
                   if (val.trim().length < 3) return 'الملاحظة قصيرة جداً';
                   return null;
                 },
@@ -306,14 +323,7 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
                 ],
               ),
             ),
-            Radio<String>(
-              value: value,
-              groupValue: _selectedResolution,
-              activeColor: color,
-              onChanged: (val) {
-                if (val != null) setState(() => _selectedResolution = val);
-              },
-            ),
+            Radio<String>(value: value, activeColor: color),
           ],
         ),
       ),

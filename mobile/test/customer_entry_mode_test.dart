@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../lib/features/auth/presentation/customer_entry_mode.dart';
+import 'package:muthbat/features/auth/presentation/customer_entry_mode.dart';
 
 void main() {
   test('workspace preference is isolated per account', () async {

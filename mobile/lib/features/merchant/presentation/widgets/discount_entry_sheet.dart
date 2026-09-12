@@ -265,22 +265,27 @@ class _DiscountEntrySheetState extends ConsumerState<DiscountEntrySheet> {
                   ),
                 ),
                 validator: (val) {
-                  if (val == null || val.trim().isEmpty)
+                  if (val == null || val.trim().isEmpty) {
                     return 'يرجى إدخال مبلغ الخصم';
+                  }
                   final parsedMoney = Money.tryParse(val.trim());
                   final parsed = parsedMoney?.toDouble();
-                  if (parsed != null && !parsed.isFinite)
+                  if (parsed != null && !parsed.isFinite) {
                     return 'المبلغ غير صالح';
-                  if (parsed != null && parsed > 9999999999999999.9999)
+                  }
+                  if (parsed != null && parsed > 9999999999999999.9999) {
                     return 'المبلغ أكبر من الحد المسموح';
+                  }
                   final normalized = val.trim().replaceAll(',', '.');
                   final fraction = normalized.contains('.')
                       ? normalized.split('.').last
                       : '';
-                  if (fraction.length > 4)
+                  if (fraction.length > 4) {
                     return 'يسمح بأربع منازل عشرية كحد أقصى';
-                  if (parsed == null || parsed <= 0)
+                  }
+                  if (parsed == null || parsed <= 0) {
                     return 'المبلغ يجب أن يكون أكبر من الصفر';
+                  }
                   return null;
                 },
               ),
@@ -311,8 +316,9 @@ class _DiscountEntrySheetState extends ConsumerState<DiscountEntrySheet> {
                   ),
                 ),
                 validator: (val) {
-                  if (val == null || val.trim().isEmpty)
+                  if (val == null || val.trim().isEmpty) {
                     return 'يرجى كتابة سبب الخصم';
+                  }
                   return null;
                 },
               ),

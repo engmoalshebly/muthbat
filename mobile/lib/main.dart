@@ -27,7 +27,7 @@ void main() async {
     // 2. تهيئة عميل Supabase
     await Supabase.initialize(
       url: SupabaseConfig.effectiveUrl,
-      anonKey: SupabaseConfig.effectiveAnonKey,
+      publishableKey: SupabaseConfig.effectiveAnonKey,
       authOptions: const FlutterAuthClientOptions(
         authFlowType: AuthFlowType.pkce,
       ),

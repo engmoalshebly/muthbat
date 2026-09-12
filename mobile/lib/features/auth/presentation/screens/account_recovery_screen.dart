@@ -194,8 +194,9 @@ class _AccountRecoveryScreenState extends ConsumerState<AccountRecoveryScreen> {
                                 setState(() => _selectedCountry = country),
                           ),
                           onChanged: (_) {
-                            if (_phoneError != null)
+                            if (_phoneError != null) {
                               setState(() => _phoneError = null);
+                            }
                           },
                         ),
 

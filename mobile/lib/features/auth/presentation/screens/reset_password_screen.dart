@@ -104,7 +104,10 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_forward_rounded, color: AppColors.textPrimary),
+          icon: const Icon(
+            Icons.arrow_forward_rounded,
+            color: AppColors.textPrimary,
+          ),
           onPressed: () => Navigator.pop(context),
         ),
       ),
@@ -180,8 +183,9 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
                             ),
                           ),
                           onChanged: (_) {
-                            if (_passwordError != null)
+                            if (_passwordError != null) {
                               setState(() => _passwordError = null);
+                            }
                           },
                         ),
 
@@ -223,8 +227,9 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
                             ),
                           ),
                           onChanged: (_) {
-                            if (_confirmPasswordError != null)
+                            if (_confirmPasswordError != null) {
                               setState(() => _confirmPasswordError = null);
+                            }
                           },
                         ),
 
