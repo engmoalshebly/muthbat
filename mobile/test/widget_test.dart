@@ -4,8 +4,8 @@ import 'package:muthbat/app/app.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:sqflite/sqflite.dart' as sq;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:muthbat/core/database/app_database.dart';
 import 'package:muthbat/features/local_ledger/local_ledger_screen.dart';
 import 'package:muthbat/features/local_ledger/local_ledger_store.dart';
 
@@ -15,7 +15,8 @@ void main() {
     (WidgetTester tester) async {
       SharedPreferences.setMockInitialValues({});
       sqfliteFfiInit();
-      sq.databaseFactory = databaseFactoryFfi;
+      AppDatabase.debugDatabaseFactory = databaseFactoryFfi;
+      LocalLedgerStore.debugDatabaseFactory = databaseFactoryFfi;
       await tester.runAsync(() async {
         final folder = await Directory.systemTemp.createTemp(
           'muthbat-boot-test-',

@@ -1,11 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:path/path.dart';
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../finance/currency_info.dart';
 import '../finance/money.dart';
+import 'db_encryption.dart';
+import 'sqlcipher_migration.dart';
 
 dynamic replaceReconciledIdDeep(
   dynamic value,
@@ -40,6 +42,15 @@ class AppDatabase {
   static const int _dbVersion = 8;
 
   static const _uuid = Uuid();
+  final DbEncryptionKeyStore _keyStore = DbEncryptionKeyStore();
+
+  /// Test-only hook to substitute the real SQLCipher factory with e.g.
+  /// sqflite_common_ffi's `databaseFactoryFfi`. Production code must never
+  /// set this — see account_storage_isolation_test.dart / customer_outbox_test.dart
+  /// / widget_test.dart. When set, the database opens unencrypted: the tests
+  /// exercise app logic, not SQLCipher itself.
+  static DatabaseFactory? debugDatabaseFactory;
+  DatabaseFactory get _factory => debugDatabaseFactory ?? databaseFactory;
 
   Database? _database;
   String? _accountId;
@@ -109,11 +120,14 @@ class AppDatabase {
     await _database?.close();
     _database = null;
     _accountId = null;
-    final directory = await getDatabasesPath();
+    final directory = await _factory.getDatabasesPath();
     final target = join(directory, 'muthbat_account_$userId.db');
     final legacy = join(directory, _dbName);
     if (!await File(target).exists() && await File(legacy).exists()) {
-      final old = await openDatabase(legacy, readOnly: true);
+      final old = await _factory.openDatabase(
+        legacy,
+        options: OpenDatabaseOptions(readOnly: true),
+      );
       bool belongsToUser = false;
       try {
         final profiles = await old.query('local_profiles', columns: ['id']);
@@ -141,20 +155,43 @@ class AppDatabase {
   }
 
   Future<Database> _initDatabase() async {
-    final dbPath = await getDatabasesPath();
-    final path = join(
-      dbPath,
-      _accountId == null ? _dbName : 'muthbat_account_$_accountId.db',
-    );
+    final dbPath = await _factory.getDatabasesPath();
+    final fileName = _accountId == null
+        ? _dbName
+        : 'muthbat_account_$_accountId.db';
+    final path = join(dbPath, fileName);
+    final usingRealEncryption = debugDatabaseFactory == null;
 
-    return await openDatabase(
+    Future<void> onConfigure(Database db) async {
+      await db.execute('PRAGMA foreign_keys = ON');
+    }
+
+    if (!usingRealEncryption) {
+      return _factory.openDatabase(
+        path,
+        options: OpenDatabaseOptions(
+          version: _dbVersion,
+          onCreate: _onCreate,
+          onUpgrade: _onUpgrade,
+          onConfigure: onConfigure,
+        ),
+      );
+    }
+
+    final passphrase = await _keyStore.passphraseFor(fileName);
+    // Covers both a normal in-place upgrade and the legacy bindAccount() file
+    // copy above, which copies the old plaintext file verbatim.
+    await migratePlaintextSqliteToEncrypted(path: path, passphrase: passphrase);
+
+    return _factory.openDatabase(
       path,
-      version: _dbVersion,
-      onCreate: _onCreate,
-      onUpgrade: _onUpgrade,
-      onConfigure: (db) async {
-        await db.execute('PRAGMA foreign_keys = ON');
-      },
+      options: SqlCipherOpenDatabaseOptions(
+        password: passphrase,
+        version: _dbVersion,
+        onCreate: _onCreate,
+        onUpgrade: _onUpgrade,
+        onConfigure: onConfigure,
+      ),
     );
   }
 
@@ -1742,7 +1779,7 @@ class AppDatabase {
       'pending_customers': pendingCustomers,
     };
 
-    final dir = await getDatabasesPath();
+    final dir = await _factory.getDatabasesPath();
     final file = File(
       join(dir, 'queue_archive_${DateTime.now().millisecondsSinceEpoch}.json'),
     );

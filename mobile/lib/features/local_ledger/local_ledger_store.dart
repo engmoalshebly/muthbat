@@ -2,9 +2,11 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as path;
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../core/database/db_encryption.dart';
+import '../../core/database/sqlcipher_migration.dart';
 import '../../core/finance/money.dart';
 
 typedef JsonMap = Map<String, dynamic>;
@@ -13,38 +15,67 @@ typedef JsonMap = Map<String, dynamic>;
 /// Monetary values are integer ten-thousandths; balances are derived from
 /// immutable entries, including reversals, rather than editable totals.
 class LocalLedgerStore {
-  LocalLedgerStore({DatabaseFactory? factory, String? databasePath})
-    : _factory = factory ?? databaseFactory,
-      _path = databasePath;
+  LocalLedgerStore({
+    DatabaseFactory? factory,
+    String? databasePath,
+    DbEncryptionKeyStore? keyStore,
+  }) : _factory = factory ?? debugDatabaseFactory ?? databaseFactory,
+       _path = databasePath,
+       // A custom factory (explicit or via the debug hook) only ever comes
+       // from tests (local_ledger_store_test / local_ledger_ui_test /
+       // widget_test), which use plain sqflite_common_ffi and have no use
+       // for SQLCipher passwords.
+       _useEncryption = factory == null && debugDatabaseFactory == null,
+       _keyStore = keyStore ?? DbEncryptionKeyStore();
 
   static final instance = LocalLedgerStore();
+
+  /// Test-only hook — see [AppDatabase.debugDatabaseFactory] for the same
+  /// pattern and rationale. Must never be set outside tests.
+  static DatabaseFactory? debugDatabaseFactory;
+
   final DatabaseFactory _factory;
   final String? _path;
+  final bool _useEncryption;
+  final DbEncryptionKeyStore _keyStore;
   Future<Database>? _opening;
   static const _uuid = Uuid();
   static const maxMinor = 999999999999999;
+  static const _dbFileName = 'muthbat_local_notebooks.db';
 
   Future<Database> get database => _opening ??= _open();
 
   Future<Database> _open() async {
     final location =
-        _path ??
-        path.join(
-          await _factory.getDatabasesPath(),
-          'muthbat_local_notebooks.db',
-        );
+        _path ?? path.join(await _factory.getDatabasesPath(), _dbFileName);
+
+    void onCreate(Database db, int _) async {
+      await db.execute(
+        'CREATE TABLE notebooks (id TEXT PRIMARY KEY, document TEXT NOT NULL)',
+      );
+      await db.execute(
+        'CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK(id=1), active_id TEXT)',
+      );
+    }
+
+    if (!_useEncryption) {
+      return _factory.openDatabase(
+        location,
+        options: OpenDatabaseOptions(version: 1, onCreate: onCreate),
+      );
+    }
+
+    final passphrase = await _keyStore.passphraseFor(_dbFileName);
+    await migratePlaintextSqliteToEncrypted(
+      path: location,
+      passphrase: passphrase,
+    );
     return _factory.openDatabase(
       location,
-      options: OpenDatabaseOptions(
+      options: SqlCipherOpenDatabaseOptions(
         version: 1,
-        onCreate: (db, _) async {
-          await db.execute(
-            'CREATE TABLE notebooks (id TEXT PRIMARY KEY, document TEXT NOT NULL)',
-          );
-          await db.execute(
-            'CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK(id=1), active_id TEXT)',
-          );
-        },
+        password: passphrase,
+        onCreate: onCreate,
       ),
     );
   }
