@@ -28,7 +28,7 @@ services:
       DATABASE_POOL_SIZE: '${DATABASE_POOL_SIZE:-10}'
       SESSION_DATA_PATH: /app/data/sessions
       ENABLE_SWAGGER: 'false'
-      DASHBOARD_ENABLED: 'false'
+      DASHBOARD_ENABLED: '${DASHBOARD_ENABLED:-false}'
       CORS_ORIGINS: '${CORS_ORIGINS:-debtledger://}'
       QUEUE_ENABLED: '${QUEUE_ENABLED:-false}'
     depends_on:
