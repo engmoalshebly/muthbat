@@ -1,8 +1,9 @@
 {
   admin off
+  default_sni {$OPENWA_IP}
 }
 
-{$OPENWA_DOMAIN} {
+(openwa) {
   encode zstd gzip
 
   @blocked path /api/docs*
@@ -26,4 +27,17 @@
     output stdout
     format json
   }
+}
+
+{$OPENWA_DOMAIN} {
+  import openwa
+}
+
+https://{$OPENWA_IP} {
+  tls {
+    issuer acme {
+      profile shortlived
+    }
+  }
+  import openwa
 }
