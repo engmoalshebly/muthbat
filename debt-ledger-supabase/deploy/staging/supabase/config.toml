@@ -12,9 +12,15 @@ minimum_password_length = 8
 enabled = false
 enable_signup = false
 
-# Account creation is performed by the OTP Edge Function using the service role.
-# The resulting confirmed user obtains a normal password session; GoTrue itself
-# never sends the WhatsApp message.
+# Account creation is performed only by the WhatsApp OTP Edge Function using the
+# service role. Native GoTrue phone signup/OTP stays disabled; the resulting
+# confirmed user can still obtain a normal phone/password session.
 [auth.sms]
-enable_signup = true
+enable_signup = false
 enable_confirmations = true
+
+# Native SMS delivery is not used; WhatsApp OTP is handled exclusively by the
+# two Edge Functions. This also prevents old local Twilio placeholders from
+# being treated as a hosted provider.
+[auth.sms.twilio_verify]
+enabled = false
