@@ -101,11 +101,104 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
     await reload();
   }
 
-  Future<void> backup() async => shareBytes(
-    utf8.encode(await store.backup()),
-    'muthbat-backup-${DateTime.now().millisecondsSinceEpoch}.json',
-    'application/json',
-  );
+  Future<void> backup() async {
+    final password = await _promptBackupPassword();
+    if (password == null) return; // dialog dismissed/cancelled
+    await shareBytes(
+      utf8.encode(
+        await store.backup(password: password.isEmpty ? null : password),
+      ),
+      'muthbat-backup-${DateTime.now().millisecondsSinceEpoch}.json',
+      'application/json',
+    );
+  }
+
+  /// Returns the chosen password, `''` when the user opted out of
+  /// protection, or `null` when the dialog was cancelled/dismissed.
+  Future<String?> _promptBackupPassword() async {
+    final controller = TextEditingController();
+    final confirmController = TextEditingController();
+    var protect = true;
+    String? error;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Text('نسخة احتياطية'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'يمكنك حماية النسخة بكلمة مرور حتى لا يقرأها أحد إن وصلت إلى شخص آخر.',
+                  ),
+                  const SizedBox(height: 8),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: protect,
+                    onChanged: (v) =>
+                        setDialogState(() => protect = v ?? true),
+                    title: const Text('حماية النسخة بكلمة مرور'),
+                    controlAffinity: ListTileControlAffinity.leading,
+                  ),
+                  if (protect) ...[
+                    TextField(
+                      controller: controller,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: 'كلمة المرور',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: confirmController,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: 'تأكيد كلمة المرور',
+                      ),
+                    ),
+                  ],
+                  if (error != null) ...[
+                    const SizedBox(height: 8),
+                    Text(error!, style: const TextStyle(color: Colors.red)),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  if (!protect) {
+                    Navigator.pop(context, '');
+                    return;
+                  }
+                  if (controller.text.length < 6) {
+                    setDialogState(
+                      () => error = 'كلمة المرور 6 أحرف على الأقل',
+                    );
+                    return;
+                  }
+                  if (controller.text != confirmController.text) {
+                    setDialogState(() => error = 'كلمتا المرور غير متطابقتين');
+                    return;
+                  }
+                  Navigator.pop(context, controller.text);
+                },
+                child: const Text('إنشاء النسخة'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    return result;
+  }
 
   Widget accountPanel(JsonMap d) {
     final complete = d['transfer_state'] == 'complete';
@@ -409,8 +502,58 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
     if (await result.length() > 20 * 1024 * 1024) {
       throw const FormatException('الملف أكبر من الحجم المدعوم');
     }
-    final bytes = await result.readAsBytes();
-    await store.restore(utf8.decode(bytes));
+    final text = utf8.decode(await result.readAsBytes());
+    String? password;
+    if (LocalLedgerStore.looksLikeEncryptedBackup(text)) {
+      password = await _promptRestorePassword();
+      if (password == null) return; // cancelled
+    }
+    await store.restore(text, password: password);
+  }
+
+  Future<String?> _promptRestorePassword() async {
+    final controller = TextEditingController();
+    String? error;
+    return showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('نسخة محمية بكلمة مرور'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: controller,
+                obscureText: true,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'كلمة المرور'),
+              ),
+              if (error != null) ...[
+                const SizedBox(height: 8),
+                Text(error!, style: const TextStyle(color: Colors.red)),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (controller.text.isEmpty) {
+                  setDialogState(() => error = 'أدخل كلمة المرور');
+                  return;
+                }
+                Navigator.pop(context, controller.text);
+              },
+              child: const Text('استعادة'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> activateCloud() async {
@@ -600,11 +743,7 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
               enabled: !busy,
               onSelected: (v) => run(() async {
                 if (v == 'backup') {
-                  await shareBytes(
-                    utf8.encode(await store.backup()),
-                    'muthbat-backup-${DateTime.now().millisecondsSinceEpoch}.json',
-                    'application/json',
-                  );
+                  await backup();
                 } else if (v == 'cloud') {
                   await activateCloud();
                 } else if (v == 'account') {

@@ -293,6 +293,45 @@ void main() {
     expect((await store.current())!['name'], 'حساباتي');
   });
   test(
+    'a password-protected backup round-trips into a fresh store and rejects wrong or missing passwords',
+    () async {
+      await store.record(
+        description: 'قيد محمي',
+        customerName: 'عميل',
+        type: 'debt',
+        amount: '55',
+      );
+      final text = await store.backup(password: 'sirr-quwi-123');
+      expect(LocalLedgerStore.looksLikeEncryptedBackup(text), isTrue);
+      expect(
+        LocalLedgerStore.looksLikeEncryptedBackup(await store.backup()),
+        isFalse,
+      );
+
+      final folder = await Directory.systemTemp.createTemp(
+        'muthbat-encrypted-backup-test-',
+      );
+      Future<LocalLedgerStore> freshStore() async => LocalLedgerStore(
+        factory: databaseFactoryFfi,
+        databasePath:
+            '${folder.path}/restored-${DateTime.now().microsecondsSinceEpoch}.db',
+      );
+
+      await expectLater(
+        (await freshStore()).restore(text),
+        throwsStateError,
+      );
+      await expectLater(
+        (await freshStore()).restore(text, password: 'wrong-password'),
+        throwsStateError,
+      );
+
+      final restored = await freshStore();
+      await restored.restore(text, password: 'sirr-quwi-123');
+      expect(await restored.current(), await store.current());
+    },
+  );
+  test(
     'transfer reserves account durably, freezes edits, and permits same account retry',
     () async {
       const owner = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';

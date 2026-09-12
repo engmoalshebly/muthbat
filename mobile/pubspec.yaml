@@ -28,6 +28,8 @@ dependencies:
   # Local Database, Cache & Offline Sync
   sqflite_sqlcipher: ^3.4.1
   flutter_secure_storage: ^11.1.1
+  cryptography: ^2.9.0
+  local_auth: ^3.0.2
   path: ^1.9.1
   shared_preferences: ^2.5.4
   uuid: ^4.5.1

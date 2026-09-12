@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../../core/database/db_encryption.dart';
 import '../../core/database/sqlcipher_migration.dart';
 import '../../core/finance/money.dart';
+import '../../core/security/encrypted_backup.dart';
 
 typedef JsonMap = Map<String, dynamic>;
 
@@ -292,20 +293,50 @@ class LocalLedgerStore {
     doc['server_business_id'] = businessId;
   });
 
-  Future<String> backup() async {
+  /// [password]: when given, the returned file is wrapped in an
+  /// [EncryptedBackupCodec] envelope. Omitted for backward compatibility with
+  /// existing plain-JSON backups and the current restore/decodeBackup tests.
+  Future<String> backup({String? password}) async {
     final doc = await current();
     if (doc == null) throw StateError('لا يوجد دفتر');
     final payload = jsonEncode(doc);
-    return jsonEncode({
+    final envelope = jsonEncode({
       'format': 'muthbat-notebook',
       'version': 1,
       'payload': payload,
       'sha256': sha256.convert(utf8.encode(payload)).toString(),
     });
+    if (password == null || password.isEmpty) return envelope;
+    return EncryptedBackupCodec.encrypt(envelope, password);
   }
 
-  /// Validate everything before touching storage; never replace another notebook.
-  Future<void> restore(String text) async {
+  /// Validate everything before touching storage; never replace another
+  /// notebook. [password] is required only when [text] is an encrypted
+  /// envelope (see [EncryptedBackupCodec]) — plain-JSON backups need none.
+  /// Peeks at a backup file's envelope, without validating or decrypting it,
+  /// just enough for the UI to decide whether to prompt for a password.
+  static bool looksLikeEncryptedBackup(String text) {
+    try {
+      return EncryptedBackupCodec.isEncryptedEnvelope(jsonDecode(text));
+    } on FormatException {
+      return false;
+    }
+  }
+
+  Future<void> restore(String text, {String? password}) async {
+    if (utf8.encode(text).length > 20 * 1024 * 1024) {
+      throw const FormatException('النسخة أكبر من الحجم المدعوم');
+    }
+    final decoded = jsonDecode(text);
+    if (EncryptedBackupCodec.isEncryptedEnvelope(decoded)) {
+      if (password == null || password.isEmpty) {
+        throw StateError('هذه نسخة محمية بكلمة مرور — أدخلها للاستعادة.');
+      }
+      text = await EncryptedBackupCodec.decrypt(
+        decoded as Map<String, dynamic>,
+        password,
+      );
+    }
     final doc = decodeBackup(text);
     final db = await database;
     await db.transaction((txn) async {
