@@ -1,0 +1,29 @@
+{
+  admin off
+}
+
+{$OPENWA_DOMAIN} {
+  encode zstd gzip
+
+  @blocked path / /api/docs* /socket.io*
+  respond @blocked 404
+
+  reverse_proxy openwa-api:2785 {
+    health_uri /api/health
+    health_interval 30s
+    health_timeout 5s
+  }
+
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options nosniff
+    X-Frame-Options DENY
+    Referrer-Policy no-referrer
+    -Server
+  }
+
+  log {
+    output stdout
+    format json
+  }
+}

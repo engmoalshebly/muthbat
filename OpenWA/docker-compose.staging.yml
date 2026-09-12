@@ -1,4 +1,21 @@
 services:
+  caddy:
+    image: caddy:2.10-alpine
+    container_name: openwa-caddy
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      OPENWA_DOMAIN: '${OPENWA_DOMAIN:?OPENWA_DOMAIN is required}'
+    volumes:
+      - ./Caddyfile.staging:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      openwa-api:
+        condition: service_healthy
+
   openwa-api:
     ports: !override
       - '127.0.0.1:${API_PORT:-2785}:2785'
@@ -19,5 +36,9 @@ services:
         condition: service_healthy
         required: true
 
-# Base compose defines persistent postgres-data and openwa-data volumes. The raw
-# API stays on loopback; terminate public TLS in a host proxy or private tunnel.
+# Base compose defines persistent postgres-data and openwa-data volumes. Caddy
+# is the only public entry point; the raw API stays on loopback.
+
+volumes:
+  caddy-data:
+  caddy-config:

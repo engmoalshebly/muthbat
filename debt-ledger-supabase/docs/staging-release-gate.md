@@ -55,8 +55,9 @@ docker compose --profile postgres -f docker-compose.yml -f docker-compose.stagin
 docker compose --profile postgres -f docker-compose.yml -f docker-compose.staging.yml ps
 ```
 
-انشر `127.0.0.1:2785` عبر reverse proxy أو نفق خاص يدعم HTTPS. اسمح للعالم
-بالوصول إلى API فقط؛ يحمي `API_MASTER_KEY` نقاط الأعمال. لا تنشر dashboard:
+الإعداد الحالي يستخدم Caddy عبر `Caddyfile.staging` ويصدر TLS تلقائياً للنطاق
+`openwa.217-216-79-195.sslip.io`، بينما يبقى `127.0.0.1:2785` داخلياً. اسمح
+للعالم بالوصول إلى 80/443 فقط؛ يحمي `API_MASTER_KEY` نقاط الأعمال. لا تنشر dashboard:
 ادخل إليه عبر VPN أو SSH tunnel مثل
 `ssh -L 2785:127.0.0.1:2785 user@host`. أغلق 2785 و2886 و5432 في جدار
 الحماية العام، وعطّل Swagger في staging.
