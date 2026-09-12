@@ -1,7 +1,7 @@
 name: muthbat
 description: "منصة مُثبَت | MUTHBAT - لتوثيق وإدارة المعاملات المالية والديون"
 publish_to: 'none'
-version: 1.0.0+1
+version: 0.2.0+2
 
 environment:
   sdk: ^3.10.8

@@ -23,8 +23,8 @@ Deno.serve(async (request) => {
         Deno.env.get("ALLOW_STAGING_DIRECT_AUTH") === "true") {
       return errorResponse(request, 403, "verified_phone_required", "Phone ownership verification is required before linking customer records.");
     }
-    // تُستدعى بعد أول تحقق OTP ناجح عبر Supabase Phone Auth (Twilio Verify):
-    // ناشترط هاتفاً موثقاً فعلياً (phone_confirmed_at) لا مجرد حقل phone.
+    // تُستدعى بعد تحقق تحدي WhatsApp الخادمي وإنشاء جلسة Supabase الرسمية؛
+    // نشترط هاتفاً موثقاً فعلياً (phone_confirmed_at) لا مجرد حقل phone.
     if (!user.phone || !user.phone_confirmed_at) {
       return errorResponse(request, 422, "phone_missing", "The authenticated user has no verified phone number.");
     }

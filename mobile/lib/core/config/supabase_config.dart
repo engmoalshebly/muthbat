@@ -11,12 +11,10 @@ import 'env.dart';
 /// │   APP_ENV             dev | staging | prod                        │
 /// │                                                                   │
 /// │ الخادم (Supabase project) — عبر `supabase secrets set` لكل مشروع: │
-/// │   TWILIO_ACCOUNT_SID        حساب Twilio لمزود Phone Auth          │
-/// │   TWILIO_AUTH_TOKEN         رمز Twilio                            │
-/// │   TWILIO_VERIFY_SERVICE_SID خدمة Twilio Verify (قناة WhatsApp     │
-/// │                             بقالب معتمد من Meta)                  │
-/// │ وتُضبط في config.toml تحت [auth.sms] و[auth.sms.twilio_verify]    │
-/// │ مع enable_signup = true و enable_confirmations = true.            │
+/// │   OPENWA_BASE_URL       عنوان بوابة OpenWA الخاصة                  │
+/// │   OPENWA_SESSION_ID     جلسة WhatsApp الجاهزة                      │
+/// │   OPENWA_API_KEY        مفتاح مشغل OpenWA                          │
+/// │ تنشئ Edge Functions تحدي OTP وتستخدم OpenWA للتسليم فقط.           │
 /// │                                                                   │
 /// │ ممنوع: عناوين LAN/localhost في بناء staging/prod، تخزين بيانات    │
 /// │ الاعتماد في SharedPreferences، أو تبديل الخادم من داخل التطبيق.    │

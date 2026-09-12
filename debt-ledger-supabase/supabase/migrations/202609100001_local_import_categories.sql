@@ -12,7 +12,7 @@ create table if not exists private.local_notebook_imports (
 revoke all on private.local_notebook_imports from public, anon, authenticated;
 
 create or replace function public.local_notebook_import_version()
-returns integer language sql stable set search_path = '' as $$ select 2 $;
+returns integer language sql stable set search_path = '' as $$ select 2 $$;
 revoke all on function public.local_notebook_import_version() from public, anon;
 grant execute on function public.local_notebook_import_version() to authenticated;
 
@@ -45,10 +45,10 @@ declare
   v_snapshot jsonb;
   v_existing private.local_notebook_imports%rowtype;
   v_result jsonb;
-  v_customer_map jsonb := '{}';
-  v_entry_map jsonb := '{}';
-  v_reversed jsonb := '{}';
-  v_entry_sources jsonb := '{}';
+  v_customer_map jsonb := '{}'::jsonb;
+  v_entry_map jsonb := '{}'::jsonb;
+  v_reversed jsonb := '{}'::jsonb;
+  v_entry_sources jsonb := '{}'::jsonb;
   v_row jsonb;
   v_source jsonb;
   v_id text;

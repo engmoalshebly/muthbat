@@ -268,7 +268,6 @@ set search_path = ''
 as $$
 declare
   v_original public.ledger_entries%rowtype;
-  v_bc public.business_customers%rowtype;
   v_balance numeric(20,4);
   v_allow_credit boolean;
   v_id uuid;
@@ -278,7 +277,8 @@ begin
   perform pg_advisory_xact_lock(hashtextextended(v_request_id::text,0));
   select * into v_original from public.ledger_entries where id=p_entry_id;
   if not found or v_original.entry_type='reversal' then raise exception 'Invalid original entry'; end if;
-  select * into v_bc from public.business_customers where id=v_original.business_customer_id for update;
+  perform 1 from public.business_customers
+   where id=v_original.business_customer_id for update;
   select * into v_original from public.ledger_entries where id=p_entry_id for update;
   perform pg_advisory_xact_lock(hashtextextended(p_entry_id::text,0));
   if not private.is_business_member(v_original.business_id,array['owner','admin','accountant']::public.business_role[]) then

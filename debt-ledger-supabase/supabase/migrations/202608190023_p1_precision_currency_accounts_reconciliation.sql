@@ -132,7 +132,7 @@ returns uuid language plpgsql security definer set search_path=''
 as $$
 declare
   v_entry public.ledger_entries%rowtype; v_journal uuid; v_original_journal uuid;
-  v_settings public.business_accounting_settings%rowtype; v_line_no smallint:=0; v_cash_account uuid;
+  v_settings public.business_accounting_settings%rowtype; v_cash_account uuid;
 begin
   select * into v_entry from public.ledger_entries where id=p_ledger_entry_id;
   if not found then raise exception 'Ledger entry not found'; end if;

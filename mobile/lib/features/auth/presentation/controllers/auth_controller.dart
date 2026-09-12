@@ -15,17 +15,16 @@ import '../validators/auth_validators.dart';
 ///
 /// مصدر الحقيقة الوحيد للجلسة هو Supabase Auth (PKCE + refresh token):
 /// `Supabase.auth.currentSession` + مستمع `onAuthStateChange`.
-/// لا تخزين لأي هوية في SharedPreferences، ولا OTP في جهاز العميل،
-/// ولا هويات محلية مفبركة من أي نوع.
+/// لا يُولَّد OTP ولا يُتحقق منه في جهاز العميل. الاستعادة المحلية تفتح فقط
+/// بيانات الحساب المحفوظة على الجهاز، ولا تنشئ جلسة خادمية أو صلاحية جديدة.
 ///
 /// ┌──────────────────────────────────────────────────────────────────┐
-/// │ مسار OTP: Supabase Phone Auth الأصلي (signInWithOtp / verifyOTP)  │
-/// │ مع مزود Twilio Verify (قناة WhatsApp بقالب معتمد من Meta).        │
+/// │ مسار OTP: Edge Functions تنشئ تحدياً خادمياً وتطلب من OpenWA       │
+/// │ تسليم الرمز عبر WhatsApp، ثم تنشئ جلسة Supabase بعد التحقق.        │
 /// │                                                                    │
 /// │ الأسرار المطلوبة (خادمية فقط — تُضبط عبر `supabase secrets set`   │
-/// │ لكل مشروع staging/prod، وفي config.toml تحت [auth.sms.twilio_verify]):
-/// │   TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_VERIFY_SERVICE_SID│
-/// │ ويُفعَّل [auth.sms] enable_signup = true و enable_confirmations.   │
+/// │ لكل مشروع staging/prod):                                           │
+/// │   OPENWA_BASE_URL / OPENWA_SESSION_ID / OPENWA_API_KEY             │
 /// │ لا يوجد أي سر أو رمز OTP داخل هذا التطبيق.                         │
 /// └──────────────────────────────────────────────────────────────────┘
 
@@ -280,7 +279,7 @@ class AuthController extends StateNotifier<AuthState> {
       }
       final normalizedPhone = AuthValidators.normalizeE164(phone);
       if (EnvConfig.isStaging) {
-        return _registerDirectlyForStaging(
+        return await _registerDirectlyForStaging(
           name: name,
           phone: normalizedPhone,
           password: password,

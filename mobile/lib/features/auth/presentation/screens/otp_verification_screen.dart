@@ -83,7 +83,7 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
       return;
     }
 
-    // التحقق خادمي 100% عبر Supabase Phone Auth (Twilio Verify) —
+    // التحقق خادمي 100% عبر تحدي Supabase الذي سلّمه OpenWA على WhatsApp.
     // المسار يُحدَّد من سياق الشاشة: تسجيل جديد أم استرداد حساب.
     final controller = ref.read(authControllerProvider.notifier);
     final pendingAction = ref.read(authControllerProvider).pendingAction;
