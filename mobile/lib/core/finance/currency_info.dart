@@ -47,17 +47,62 @@ class CurrencyCatalog {
   CurrencyCatalog._();
 
   static const defaults = <CurrencyInfo>[
-    CurrencyInfo(code: 'YER', name: 'ريال يمني', symbol: 'ر.ي'),
-    CurrencyInfo(code: 'SAR', name: 'ريال سعودي', symbol: 'ر.س'),
-    CurrencyInfo(code: 'USD', name: 'دولار أمريكي', symbol: r'$'),
-    CurrencyInfo(code: 'EUR', name: 'يورو', symbol: '€'),
-    CurrencyInfo(code: 'AED', name: 'درهم إماراتي', symbol: 'د.إ'),
-    CurrencyInfo(code: 'KWD', name: 'دينار كويتي', symbol: 'د.ك'),
-    CurrencyInfo(code: 'QAR', name: 'ريال قطري', symbol: 'ر.ق'),
-    CurrencyInfo(code: 'BHD', name: 'دينار بحريني', symbol: 'د.ب'),
-    CurrencyInfo(code: 'OMR', name: 'ريال عماني', symbol: 'ر.ع'),
-    CurrencyInfo(code: 'GBP', name: 'جنيه إسترليني', symbol: '£'),
-    CurrencyInfo(code: 'JPY', name: 'ين ياباني', symbol: '¥'),
+    CurrencyInfo(
+      code: 'YER',
+      name: 'ريال يمني',
+      symbol: 'ر.ي',
+      decimalScale: 2,
+    ),
+    CurrencyInfo(
+      code: 'SAR',
+      name: 'ريال سعودي',
+      symbol: 'ر.س',
+      decimalScale: 2,
+    ),
+    CurrencyInfo(
+      code: 'USD',
+      name: 'دولار أمريكي',
+      symbol: r'$',
+      decimalScale: 2,
+    ),
+    CurrencyInfo(code: 'EUR', name: 'يورو', symbol: '€', decimalScale: 2),
+    CurrencyInfo(
+      code: 'AED',
+      name: 'درهم إماراتي',
+      symbol: 'د.إ',
+      decimalScale: 2,
+    ),
+    CurrencyInfo(
+      code: 'KWD',
+      name: 'دينار كويتي',
+      symbol: 'د.ك',
+      decimalScale: 3,
+    ),
+    CurrencyInfo(
+      code: 'QAR',
+      name: 'ريال قطري',
+      symbol: 'ر.ق',
+      decimalScale: 2,
+    ),
+    CurrencyInfo(
+      code: 'BHD',
+      name: 'دينار بحريني',
+      symbol: 'د.ب',
+      decimalScale: 3,
+    ),
+    CurrencyInfo(
+      code: 'OMR',
+      name: 'ريال عماني',
+      symbol: 'ر.ع',
+      decimalScale: 3,
+    ),
+    CurrencyInfo(
+      code: 'GBP',
+      name: 'جنيه إسترليني',
+      symbol: '£',
+      decimalScale: 2,
+    ),
+    CurrencyInfo(code: 'JPY', name: 'ين ياباني', symbol: '¥', decimalScale: 0),
   ];
 
   static CurrencyInfo forCode(

@@ -39,7 +39,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const String _dbName = 'muthbat_offline_ledger.db';
-  static const int _dbVersion = 8;
+  static const int _dbVersion = 9;
 
   static const _uuid = Uuid();
   final DbEncryptionKeyStore _keyStore = DbEncryptionKeyStore();
@@ -220,6 +220,9 @@ class AppDatabase {
       await db.execute(
         'ALTER TABLE local_ledger_entries ADD COLUMN local_category_label TEXT',
       );
+    }
+    if (oldVersion < 9) {
+      await _migrateToV9(db);
     }
   }
 
@@ -477,6 +480,57 @@ class AppDatabase {
     );
   }
 
+  /// v9 makes integer minor units the local accounting source of truth.
+  /// REAL columns remain temporarily as read compatibility projections only.
+  Future<void> _migrateToV9(Database db) async {
+    for (final column in const [
+      'credit_limit_minor',
+      'current_balance_minor',
+      'amount_customer_owes_minor',
+      'amount_business_owes_customer_minor',
+      'overdue_balance_minor',
+      'server_balance_minor',
+    ]) {
+      await _addColumnIfMissing(
+        db,
+        'local_business_customers',
+        column,
+        '$column INTEGER',
+      );
+    }
+    await db.transaction((txn) async {
+      final customers = await txn.query('local_business_customers');
+      for (final row in customers) {
+        int? minor(String field) {
+          final value = row[field] as num?;
+          return value == null ? null : Money.fromNum(value).minorUnits;
+        }
+
+        await txn.update(
+          'local_business_customers',
+          {
+            'credit_limit_minor': minor('credit_limit'),
+            'current_balance_minor': minor('current_balance') ?? 0,
+            'amount_customer_owes_minor': minor('amount_customer_owes') ?? 0,
+            'amount_business_owes_customer_minor':
+                minor('amount_business_owes_customer') ?? 0,
+            'overdue_balance_minor': minor('overdue_balance') ?? 0,
+            'server_balance_minor': minor('server_balance'),
+          },
+          where: 'id = ?',
+          whereArgs: [row['id']],
+        );
+      }
+      for (final currency in CurrencyCatalog.defaults) {
+        await txn.insert(
+          'local_currencies',
+          currency.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
+  }
+
   /// v6: repair databases created by builds that shipped the column in the
   /// model but did not bump the SQLite schema version.
   Future<void> _migrateToV6(Database db) async {
@@ -555,6 +609,12 @@ class AppDatabase {
         amount_business_owes_customer REAL DEFAULT 0.0,
         overdue_balance REAL DEFAULT 0.0,
         server_balance REAL,
+        credit_limit_minor INTEGER,
+        current_balance_minor INTEGER NOT NULL DEFAULT 0,
+        amount_customer_owes_minor INTEGER NOT NULL DEFAULT 0,
+        amount_business_owes_customer_minor INTEGER NOT NULL DEFAULT 0,
+        overdue_balance_minor INTEGER NOT NULL DEFAULT 0,
+        server_balance_minor INTEGER,
         is_archived INTEGER DEFAULT 0,
         sync_status TEXT DEFAULT 'synced',
         created_at TEXT,
@@ -811,6 +871,9 @@ class AppDatabase {
             {
               'server_balance':
                   (customer['current_balance'] as num?)?.toDouble() ?? 0.0,
+              'server_balance_minor': Money.fromNum(
+                customer['current_balance'] as num? ?? 0,
+              ).minorUnits,
               'link_status':
                   customer['link_status'] ?? existing.first['link_status'],
             },
@@ -824,6 +887,7 @@ class AppDatabase {
       final row = Map<String, dynamic>.from(customer);
       row['server_balance'] =
           (customer['current_balance'] as num?)?.toDouble() ?? 0.0;
+      _addCustomerMinorUnits(row);
       await db.insert(
         'local_business_customers',
         row,
@@ -832,11 +896,28 @@ class AppDatabase {
       return;
     }
 
+    final row = Map<String, dynamic>.from(customer);
+    _addCustomerMinorUnits(row);
     await db.insert(
       'local_business_customers',
-      customer,
+      row,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+  }
+
+  static void _addCustomerMinorUnits(Map<String, dynamic> row) {
+    const fields = {
+      'credit_limit': 'credit_limit_minor',
+      'current_balance': 'current_balance_minor',
+      'amount_customer_owes': 'amount_customer_owes_minor',
+      'amount_business_owes_customer': 'amount_business_owes_customer_minor',
+      'overdue_balance': 'overdue_balance_minor',
+      'server_balance': 'server_balance_minor',
+    };
+    for (final entry in fields.entries) {
+      final value = row[entry.key] as num?;
+      if (value != null) row[entry.value] = Money.fromNum(value).minorUnits;
+    }
   }
 
   // ==================== أرصدة العملات المتعددة للعملاء ====================
@@ -854,8 +935,10 @@ class AppDatabase {
     final Map<String, double> balances = {};
     for (final row in rows) {
       final curr = (row['currency_code'] as String?)?.toUpperCase() ?? 'YER';
-      final bal = (row['current_balance'] as num?)?.toDouble() ?? 0.0;
-      balances[curr] = bal;
+      final minor = (row['current_balance_minor'] as num?)?.toInt();
+      balances[curr] = minor == null
+          ? ((row['current_balance'] as num?)?.toDouble() ?? 0.0)
+          : Money.fromMinorUnits(minor).toDouble();
     }
     return balances;
   }
@@ -896,8 +979,8 @@ class AppDatabase {
       '''
       SELECT 
         currency_code,
-        SUM(CASE WHEN current_balance > 0 THEN current_balance ELSE 0 END) as total_receivables,
-        SUM(CASE WHEN current_balance < 0 THEN ABS(current_balance) ELSE 0 END) as total_payables,
+        SUM(CASE WHEN current_balance_minor > 0 THEN current_balance_minor ELSE 0 END) / 10000.0 as total_receivables,
+        SUM(CASE WHEN current_balance_minor < 0 THEN ABS(current_balance_minor) ELSE 0 END) / 10000.0 as total_payables,
         COUNT(DISTINCT business_customer_id) as customer_count
       FROM local_customer_currency_balances
       WHERE business_id = ?
@@ -932,25 +1015,21 @@ class AppDatabase {
             (row['current_balance'] as num?)?.toDouble() ?? 0.0;
         final serverDebits = (row['total_debits'] as num?)?.toDouble() ?? 0.0;
         final serverCredits = (row['total_credits'] as num?)?.toDouble() ?? 0.0;
-        await txn.insert(
-          'local_customer_currency_balances',
-          {
-            'id': 'bal-$custId-$currency',
-            'business_id': businessId,
-            'business_customer_id': custId,
-            'currency_code': currency,
-            'current_balance': serverBalance,
-            'current_balance_minor': Money.fromNum(serverBalance).minorUnits,
-            'total_debits': serverDebits,
-            'total_debits_minor': Money.fromNum(serverDebits).minorUnits,
-            'total_credits': serverCredits,
-            'total_credits_minor': Money.fromNum(serverCredits).minorUnits,
-            'entry_count': (row['entry_count'] as num?)?.toInt() ?? 0,
-            'last_entry_at': row['last_entry_at'],
-            'updated_at': DateTime.now().toIso8601String(),
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert('local_customer_currency_balances', {
+          'id': 'bal-$custId-$currency',
+          'business_id': businessId,
+          'business_customer_id': custId,
+          'currency_code': currency,
+          'current_balance': serverBalance,
+          'current_balance_minor': Money.fromNum(serverBalance).minorUnits,
+          'total_debits': serverDebits,
+          'total_debits_minor': Money.fromNum(serverDebits).minorUnits,
+          'total_credits': serverCredits,
+          'total_credits_minor': Money.fromNum(serverCredits).minorUnits,
+          'entry_count': (row['entry_count'] as num?)?.toInt() ?? 0,
+          'last_entry_at': row['last_entry_at'],
+          'updated_at': DateTime.now().toIso8601String(),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
     });
   }
@@ -1116,26 +1195,22 @@ class AppDatabase {
         }
       }
 
-      await txn.insert(
-        'local_customer_currency_balances',
-        {
-          'id': 'bal-$custId-$currency',
-          'business_id': businessId,
-          'business_customer_id': custId,
-          'currency_code': currency,
-          'current_balance': Money.fromMinorUnits(currBalMinor).toDouble(),
-          'current_balance_minor': currBalMinor,
-          'total_debits': Money.fromMinorUnits(debitsMinor).toDouble(),
-          'total_debits_minor': debitsMinor,
-          'total_credits': Money.fromMinorUnits(creditsMinor).toDouble(),
-          'total_credits_minor': creditsMinor,
-          'entry_count': count + 1,
-          'last_entry_at':
-              entry['occurred_at'] ?? DateTime.now().toIso8601String(),
-          'updated_at': DateTime.now().toIso8601String(),
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      await txn.insert('local_customer_currency_balances', {
+        'id': 'bal-$custId-$currency',
+        'business_id': businessId,
+        'business_customer_id': custId,
+        'currency_code': currency,
+        'current_balance': Money.fromMinorUnits(currBalMinor).toDouble(),
+        'current_balance_minor': currBalMinor,
+        'total_debits': Money.fromMinorUnits(debitsMinor).toDouble(),
+        'total_debits_minor': debitsMinor,
+        'total_credits': Money.fromMinorUnits(creditsMinor).toDouble(),
+        'total_credits_minor': creditsMinor,
+        'entry_count': count + 1,
+        'last_entry_at':
+            entry['occurred_at'] ?? DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
 
       // 3. تحديث الرصيد المسطح الافتراضي في جدول العميل (للتوافق القديم)
       final custRows = await txn.query(
@@ -1146,9 +1221,11 @@ class AppDatabase {
       );
 
       if (custRows.isNotEmpty && currency == baseCurrency) {
-        int currentBalMinor = Money.fromNum(
-          (custRows.first['current_balance'] as num?)?.toDouble() ?? 0,
-        ).minorUnits;
+        int currentBalMinor =
+            (custRows.first['current_balance_minor'] as num?)?.toInt() ??
+            Money.fromNum(
+              (custRows.first['current_balance'] as num?)?.toDouble() ?? 0,
+            ).minorUnits;
         if (entryType == 'debt' || entryType == 'fee') {
           currentBalMinor += amountMinor;
         } else if (entryType == 'payment' || entryType == 'discount') {
@@ -1165,8 +1242,15 @@ class AppDatabase {
           'local_business_customers',
           {
             'current_balance': currentBal,
+            'current_balance_minor': currentBalMinor,
             'amount_customer_owes': owes,
+            'amount_customer_owes_minor': currentBalMinor > 0
+                ? currentBalMinor
+                : 0,
             'amount_business_owes_customer': advance,
+            'amount_business_owes_customer_minor': currentBalMinor < 0
+                ? -currentBalMinor
+                : 0,
             'updated_at': DateTime.now().toIso8601String(),
           },
           where: 'id = ?',
@@ -1376,6 +1460,19 @@ class AppDatabase {
       where: "status = 'dead_letter'",
       orderBy: 'id ASC',
     );
+  }
+
+  Future<Map<String, dynamic>?> getMutationByClientRequestId(
+    String clientRequestId,
+  ) async {
+    final db = await database;
+    final rows = await db.query(
+      'offline_mutations_queue',
+      where: 'client_request_id = ?',
+      whereArgs: [clientRequestId],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
   }
 
   Future<int> getDeadLetterCount() async {

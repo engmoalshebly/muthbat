@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_icons.dart';
 import '../../core/sync/sync_engine.dart';
+import '../../app/router/app_routes.dart';
 
 /// شريط حالة المزامنة الدائم — يعرض للمستخدم بوضوح:
 /// «متزامن ✓» / «N عملية معلقة» / «لا يوجد اتصال» / خطأ المزامنة الفعلي.
@@ -50,7 +51,10 @@ class SyncStatusBanner extends StatelessWidget {
             fgColor = AppColors.error;
             icon = Icons.error_outline_rounded;
             text = progress.lastMessage ?? 'تعذرت المزامنة — حاول مرة أخرى';
-            onTap = () => SyncEngine.instance.triggerSync();
+            onTap = progress.deadLetterCount > 0
+                ? () =>
+                      Navigator.pushNamed(context, AppRoutes.rejectedOperations)
+                : () => SyncEngine.instance.triggerSync();
             break;
           case SyncState.synced:
             if (pending > 0) {

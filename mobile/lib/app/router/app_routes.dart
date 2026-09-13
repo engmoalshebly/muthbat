@@ -21,6 +21,7 @@ import '../../features/merchant/presentation/screens/merchant_profile_screen.dar
 import '../../features/merchant/presentation/screens/statement_preview_screen.dart';
 import '../../features/merchant/presentation/screens/team_screen.dart';
 import '../../features/splash/presentation/screens/splash_screen.dart';
+import '../../features/sync/presentation/rejected_operations_screen.dart';
 
 /// مسارات التنقل المعتمدة في تطبيق «مُثبَت | MUTHBAT»
 class AppRoutes {
@@ -45,6 +46,7 @@ class AppRoutes {
   static const String businessProfileEdit = '/business-profile-edit';
   static const String resetPassword = '/reset-password';
   static const String appLockSettings = '/app-lock-settings';
+  static const String rejectedOperations = '/rejected-operations';
 
   static Route<dynamic> _errorRoute(String message) {
     return MaterialPageRoute(
@@ -54,6 +56,11 @@ class AppRoutes {
 
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
     switch (settings.name) {
+      case rejectedOperations:
+        return MaterialPageRoute(
+          builder: (_) => const RejectedOperationsScreen(),
+          settings: settings,
+        );
       case appLockSettings:
         return MaterialPageRoute(
           builder: (_) => const AppLockSettingsScreen(),

@@ -5,6 +5,7 @@ import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_typography.dart';
 
 import '../../../app/theme/app_icons.dart';
+import '../../../app/router/app_routes.dart';
 
 /// مؤشر وشريط حالة المزامنة اللحظي (Sync Status Indicator)
 /// يعرض حالة الشبكة والأوامر المعلقة في طابور الأوفلاين للتاجر بشكل سلس وأنيق.
@@ -184,6 +185,10 @@ class SyncStatusIndicator extends StatelessWidget {
   }
 
   void _handleTap(BuildContext context, SyncProgress progress) {
+    if (progress.deadLetterCount > 0) {
+      Navigator.pushNamed(context, AppRoutes.rejectedOperations);
+      return;
+    }
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(

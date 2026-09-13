@@ -24,6 +24,28 @@ class Money {
 
   factory Money.fromNum(num value) => Money.fromText(value.toString());
 
+  factory Money.fromCurrencyText(String value, {required int decimalScale}) {
+    if (decimalScale < 0 || decimalScale > scale) {
+      throw RangeError.range(decimalScale, 0, scale, 'decimalScale');
+    }
+    final money = Money.fromText(value);
+    final quantum = _pow10(scale - decimalScale);
+    if (money.minorUnits % quantum != 0) {
+      throw FormatException(
+        'Amount supports at most $decimalScale decimal places',
+      );
+    }
+    return money;
+  }
+
+  static int _pow10(int exponent) {
+    var result = 1;
+    for (var i = 0; i < exponent; i++) {
+      result *= 10;
+    }
+    return result;
+  }
+
   static Money? tryParse(String value) {
     try {
       return Money.fromText(value);
@@ -40,4 +62,10 @@ class Money {
   }
 
   double toDouble() => minorUnits / factor;
+
+  Money operator +(Money other) =>
+      Money.fromMinorUnits(minorUnits + other.minorUnits);
+
+  Money operator -(Money other) =>
+      Money.fromMinorUnits(minorUnits - other.minorUnits);
 }
