@@ -893,7 +893,26 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                                     ),
                                   ),
                                   const SizedBox(height: 4),
-                                  if (entry.syncStatus == 'pending_insert')
+                                  if (entry.syncStatus == 'dead_letter')
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 5,
+                                        vertical: 1.5,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.errorLight,
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: const Text(
+                                        'مرفوض',
+                                        style: TextStyle(
+                                          fontSize: 8,
+                                          color: AppColors.error,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    )
+                                  else if (entry.syncStatus != 'synced')
                                     Container(
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: 5,
@@ -1628,12 +1647,20 @@ class _LedgerEntryDetailsSheet extends StatelessWidget {
                   _statusChip(
                     icon: entry.syncStatus == 'synced'
                         ? Icons.cloud_done_rounded
+                        : entry.syncStatus == 'dead_letter'
+                        ? Icons.error_outline_rounded
                         : Icons.hourglass_top_rounded,
                     label: entry.syncStatus == 'synced'
-                        ? 'متزامنة'
-                        : 'بانتظار المزامنة',
+                        ? 'موثقة على الخادم'
+                        : entry.syncStatus == 'dead_letter'
+                        ? 'مرفوضة وتحتاج مراجعة'
+                        : entry.syncStatus == 'failed'
+                        ? 'محفوظة؛ تعذّر الإرسال مؤقتًا'
+                        : 'محفوظة وتنتظر الإرسال',
                     color: entry.syncStatus == 'synced'
                         ? AppColors.success
+                        : entry.syncStatus == 'dead_letter'
+                        ? AppColors.error
                         : AppColors.warning,
                   ),
                   _statusChip(

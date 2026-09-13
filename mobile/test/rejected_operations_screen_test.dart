@@ -29,5 +29,6 @@ void main() {
     expect(find.text('المبلغ يتجاوز الحد المسموح'), findsOneWidget);
     expect(find.text('12.3400 USD'), findsOneWidget);
     expect(find.text('إعادة المحاولة'), findsOneWidget);
+    expect(find.text('تجاهل العملية'), findsNothing);
   });
 }

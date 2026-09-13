@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 
 import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -587,12 +588,35 @@ class MerchantRepository {
       entry: entry.toMap(),
       commandType: RpcContract.cmdCreateLedgerEntry,
       payload: payload,
+      dependentMutation: attachmentPath == null
+          ? null
+          : {
+              'client_request_id': _uuid.v4(),
+              'command_type': 'upload_attachment',
+              'local_ref_id': entryId,
+              'payload': {
+                'localPath': attachmentPath,
+                'entityId': entryId,
+                'filename': p.basename(attachmentPath),
+                'mimeType': _attachmentMimeType(attachmentPath),
+              },
+            },
     );
 
     // إطلاق محرك المزامنة في الخلفية
     SyncEngine.instance.triggerSync();
 
     return entry;
+  }
+
+  static String _attachmentMimeType(String path) {
+    final extension = p.extension(path).toLowerCase();
+    return switch (extension) {
+      '.png' => 'image/png',
+      '.webp' => 'image/webp',
+      '.pdf' => 'application/pdf',
+      _ => 'image/jpeg',
+    };
   }
 
   /// تطبيق خصم للعميل (Discount) — بلا معامل عملة (الخصم بعملة المحل حصراً)

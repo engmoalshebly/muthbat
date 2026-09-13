@@ -24,6 +24,15 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.muthbat.muthbat.periodic-sync</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
 	<key>NSContactsUsageDescription</key>
 	<string>نحتاج الوصول إلى جهات الاتصال لاختيار عميل بسرعة.</string>
 	<key>UILaunchStoryboardName</key>

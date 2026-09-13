@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../finance/currency_info.dart';
 import '../finance/money.dart';
+import '../sync/sync_policy.dart';
 import 'db_encryption.dart';
 import 'sqlcipher_migration.dart';
 
@@ -1077,6 +1078,7 @@ class AppDatabase {
     required String commandType,
     required Map<String, dynamic> payload,
     String? dependsOnClientRequestId,
+    Map<String, dynamic>? dependentMutation,
   }) async {
     final db = await database;
     await db.transaction((txn) async {
@@ -1269,6 +1271,19 @@ class AppDatabase {
         'depends_on_client_request_id': effectiveDependency,
         'created_at': DateTime.now().toIso8601String(),
       }, conflictAlgorithm: ConflictAlgorithm.replace);
+
+      if (dependentMutation != null) {
+        await txn.insert('offline_mutations_queue', {
+          'client_request_id': dependentMutation['client_request_id'],
+          'command_type': dependentMutation['command_type'],
+          'payload_json': jsonEncode(dependentMutation['payload']),
+          'local_ref_id': dependentMutation['local_ref_id'],
+          'status': 'pending',
+          'attempt_count': 0,
+          'depends_on_client_request_id': entry['client_request_id'],
+          'created_at': DateTime.now().toIso8601String(),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
     });
   }
 
@@ -1417,18 +1432,26 @@ class AppDatabase {
     required DateTime nextRetryAt,
   }) async {
     final db = await database;
-    await db.update(
-      'offline_mutations_queue',
-      {
-        'status': 'failed',
-        'attempt_count': attemptCount,
-        'last_error': error,
-        'last_error_code': errorCode,
-        'next_retry_at': nextRetryAt.toIso8601String(),
-      },
-      where: 'client_request_id = ?',
-      whereArgs: [clientRequestId],
-    );
+    await db.transaction((txn) async {
+      await txn.update(
+        'offline_mutations_queue',
+        {
+          'status': 'failed',
+          'attempt_count': attemptCount,
+          'last_error': error,
+          'last_error_code': errorCode,
+          'next_retry_at': nextRetryAt.toIso8601String(),
+        },
+        where: 'client_request_id = ?',
+        whereArgs: [clientRequestId],
+      );
+      await txn.update(
+        'local_ledger_entries',
+        {'sync_status': 'failed'},
+        where: 'client_request_id = ?',
+        whereArgs: [clientRequestId],
+      );
+    });
   }
 
   /// الفشل الدائم: العنصر لا يُحذف أبداً ويبقى مرئياً للمراجعة اليدوية.
@@ -1439,18 +1462,26 @@ class AppDatabase {
     String? errorCode,
   }) async {
     final db = await database;
-    await db.update(
-      'offline_mutations_queue',
-      {
-        'status': 'dead_letter',
-        'attempt_count': attemptCount,
-        'last_error': error,
-        'last_error_code': errorCode,
-        'next_retry_at': null,
-      },
-      where: 'client_request_id = ?',
-      whereArgs: [clientRequestId],
-    );
+    await db.transaction((txn) async {
+      await txn.update(
+        'offline_mutations_queue',
+        {
+          'status': 'dead_letter',
+          'attempt_count': attemptCount,
+          'last_error': error,
+          'last_error_code': errorCode,
+          'next_retry_at': null,
+        },
+        where: 'client_request_id = ?',
+        whereArgs: [clientRequestId],
+      );
+      await txn.update(
+        'local_ledger_entries',
+        {'sync_status': 'dead_letter'},
+        where: 'client_request_id = ?',
+        whereArgs: [clientRequestId],
+      );
+    });
   }
 
   Future<List<Map<String, dynamic>>> getDeadLetterMutations() async {
@@ -1486,22 +1517,40 @@ class AppDatabase {
   /// إعادة عنصر dead_letter إلى الدورة (تصفير العداد) — بقرار صريح من المستخدم.
   Future<void> retryDeadLetterMutation(String clientRequestId) async {
     final db = await database;
-    await db.update(
-      'offline_mutations_queue',
-      {
-        'status': 'pending',
-        'attempt_count': 0,
-        'next_retry_at': null,
-        'last_error': null,
-        'last_error_code': null,
-      },
-      where: 'client_request_id = ?',
-      whereArgs: [clientRequestId],
-    );
+    await db.transaction((txn) async {
+      await txn.update(
+        'offline_mutations_queue',
+        {
+          'status': 'pending',
+          'attempt_count': 0,
+          'next_retry_at': null,
+          'last_error': null,
+          'last_error_code': null,
+        },
+        where: 'client_request_id = ?',
+        whereArgs: [clientRequestId],
+      );
+      await txn.update(
+        'local_ledger_entries',
+        {'sync_status': 'pending_insert'},
+        where: 'client_request_id = ?',
+        whereArgs: [clientRequestId],
+      );
+    });
   }
 
   /// تجاهل وحذف عنصر dead_letter — بقرار صريح من المستخدم (حذف بيانات مالية).
   Future<void> discardDeadLetterMutation(String clientRequestId) async {
+    final mutation = await getMutationByClientRequestId(clientRequestId);
+    if (mutation == null) return;
+    final command = mutation['command_type'] as String? ?? '';
+    if (!canDiscardSyncCommand(command)) {
+      throw StateError(
+        isFinancialSyncCommand(command)
+            ? 'لا يمكن حذف أمر مالي مرفوض؛ صحح السبب ثم أعد المحاولة.'
+            : 'نوع العملية غير معروف ولا يمكن حذفه بأمان.',
+      );
+    }
     await removeMutation(clientRequestId);
   }
 

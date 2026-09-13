@@ -3,11 +3,14 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:flutter/foundation.dart';
+import 'package:crypto/crypto.dart';
+import 'package:flutter/widgets.dart';
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 import '../database/app_database.dart';
+import 'sync_policy.dart';
 
 enum SyncState { idle, syncing, synced, offline, error }
 
@@ -163,7 +166,7 @@ bool _isPermanentGuardMessage(String message) {
 /// دورة حياة الطابور: pending → syncing → (نجاح: تسوية المعرّف + حذف)
 /// أو (خطأ مؤقت: failed + backoff أسّي 1د→30د حتى 8 محاولات)
 /// أو (خطأ دائم: dead_letter فوراً بلا حذف صامت).
-class SyncEngine {
+class SyncEngine with WidgetsBindingObserver {
   SyncEngine._();
   static final SyncEngine instance = SyncEngine._();
 
@@ -192,6 +195,7 @@ class SyncEngine {
 
   /// بدء الاستماع لشبكة الإنترنت والمزامنة الدورية
   void init() {
+    WidgetsBinding.instance.addObserver(this);
     _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
       final isOnline = results.any((r) => r != ConnectivityResult.none);
       if (isOnline) {
@@ -212,9 +216,15 @@ class SyncEngine {
   }
 
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _connectivitySub?.cancel();
     _periodicTimer?.cancel();
     _progressController.close();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) triggerSync();
   }
 
   void _notify(SyncState state, [String? message]) async {
@@ -246,6 +256,7 @@ class SyncEngine {
         Supabase.instance.client.auth.currentUser?.id) {
       return;
     }
+    final syncAccountId = AppDatabase.instance.accountId!;
     _isProcessing = true;
     _drained = Completer<void>();
 
@@ -264,10 +275,14 @@ class SyncEngine {
       }
 
       // 1. معالجة العمليات غير المرسلة في الطابور (Push Queue)
-      await _processPendingMutations();
+      await _processPendingMutations(syncAccountId);
 
       // 2. سحب البيانات المحدثة من السحابة (Pull Updates)
-      await _pullRemoteUpdates();
+      assertSyncAccount(
+        expected: syncAccountId,
+        current: AppDatabase.instance.accountId,
+      );
+      await _pullRemoteUpdates(syncAccountId);
 
       _lastSyncAt = DateTime.now();
 
@@ -292,7 +307,7 @@ class SyncEngine {
 
   // ==================== Push: إرسال الأوامر المعلقة ====================
 
-  Future<void> _processPendingMutations() async {
+  Future<void> _processPendingMutations(String syncAccountId) async {
     final client = Supabase.instance.client;
     if (client.auth.currentSession == null) return;
 
@@ -304,6 +319,10 @@ class SyncEngine {
     final mutations = await db.getDueMutations(DateTime.now());
 
     for (final mutation in mutations) {
+      assertSyncAccount(
+        expected: syncAccountId,
+        current: AppDatabase.instance.accountId,
+      );
       final String clientRequestId = mutation['client_request_id'];
       final String commandType = mutation['command_type'];
       final int attemptCount =
@@ -329,8 +348,13 @@ class SyncEngine {
           commandType,
           payload,
         );
+        assertSyncAccount(
+          expected: syncAccountId,
+          current: AppDatabase.instance.accountId,
+        );
         await _reconcileSuccess(mutation, serverEntityId);
       } catch (error) {
+        if (error is SyncAccountChanged) rethrow;
         final classification = classifySyncError(error);
         final newAttemptCount = attemptCount + 1;
         debugPrint(
@@ -480,6 +504,52 @@ class SyncEngine {
         }
         return statementId?.toString();
 
+      case 'upload_attachment':
+        final localPath = payload['localPath']?.toString();
+        final entityId = payload['entityId']?.toString();
+        final filename = payload['filename']?.toString();
+        final mimeType = payload['mimeType']?.toString();
+        if (localPath == null ||
+            entityId == null ||
+            filename == null ||
+            mimeType == null) {
+          throw StateError('invalid_attachment_payload');
+        }
+        final file = File(localPath);
+        if (!await file.exists()) throw StateError('attachment_file_missing');
+        final bytes = await file.readAsBytes();
+        final sessionResponse = await client.functions.invoke(
+          'signed-document-upload',
+          body: {
+            'entityType': 'ledger_entry',
+            'entityId': entityId,
+            'filename': filename,
+            'mimeType': mimeType,
+            'sizeBytes': bytes.length,
+            'sha256Hex': sha256.convert(bytes).toString(),
+          },
+        );
+        final session = sessionResponse.data as Map;
+        final signedUrl = session['signedUrl']?.toString();
+        final uploadSessionId = session['uploadSessionId']?.toString();
+        if (signedUrl == null || uploadSessionId == null) {
+          throw StateError('signed_upload_session_missing');
+        }
+        final upload = await http.put(
+          Uri.parse(signedUrl),
+          headers: {'content-type': mimeType},
+          body: bytes,
+        );
+        if (upload.statusCode < 200 || upload.statusCode >= 300) {
+          throw HttpException('attachment_upload_${upload.statusCode}');
+        }
+        final finalized = await client.functions.invoke(
+          'finalize-document-upload',
+          body: {'uploadSessionId': uploadSessionId},
+        );
+        final result = finalized.data;
+        return result is Map ? result['fileId']?.toString() : null;
+
       case 'update_business_profile':
         final businessId = payload['businessId']?.toString();
         if (businessId == null || businessId.isEmpty) {
@@ -539,7 +609,7 @@ class SyncEngine {
 
   // ==================== Pull: سحب البيانات من السحابة ====================
 
-  Future<void> _pullRemoteUpdates() async {
+  Future<void> _pullRemoteUpdates(String syncAccountId) async {
     final client = Supabase.instance.client;
     final user = client.auth.currentUser;
     if (user == null) return;
@@ -566,6 +636,10 @@ class SyncEngine {
           .eq('status', 'active');
 
       for (final row in memberBusinesses) {
+        assertSyncAccount(
+          expected: syncAccountId,
+          current: AppDatabase.instance.accountId,
+        );
         final b = row['businesses'] as Map<String, dynamic>?;
         if (b == null) continue;
 
@@ -677,33 +751,47 @@ class SyncEngine {
     String? cursor = await db.getLocalCheckpoint(businessId);
     cursor ??= await _getServerCheckpoint(client, deviceId, businessId);
 
-    var filter = client
-        .from('ledger_timeline')
-        .select(
-          'id, business_id, business_customer_id, customer_id, entry_type, '
-          'direction, amount, currency_code, description, occurred_at, '
-          'category, payment_method, reference_number, bank_or_agent_name, attachment_url, '
-          'due_date, external_reference, client_request_id, created_at, '
-          'confirmation_status, dispute_status, is_reversed',
-        )
-        .eq('business_id', businessId);
-
-    if (cursor != null && cursor.isNotEmpty) {
-      filter = filter.gt('created_at', cursor);
-    }
-
-    final rows = await filter.order('created_at', ascending: true).limit(500);
+    final rows = await collectAllPages<Map<String, dynamic>>(
+      fetchPage: (from, to) async {
+        var filter = client
+            .from('ledger_timeline')
+            .select(
+              'id, business_id, business_customer_id, customer_id, entry_type, '
+              'direction, amount, currency_code, description, occurred_at, '
+              'category, payment_method, reference_number, bank_or_agent_name, attachment_url, '
+              'due_date, external_reference, client_request_id, created_at, '
+              'confirmation_status, dispute_status, is_reversed',
+            )
+            .eq('business_id', businessId);
+        if (cursor != null && cursor.isNotEmpty) {
+          filter = filter.gt('created_at', cursor);
+        }
+        final page = await filter
+            .order('created_at', ascending: true)
+            .order('id', ascending: true)
+            .range(from, to);
+        return page.map((row) => Map<String, dynamic>.from(row)).toList();
+      },
+    );
     if (rows.isEmpty) return;
 
     // Optional on legacy servers; other failures must not advance the cursor.
     final categoryLabels = <String, String>{};
     try {
-      final labels = await client
-          .from('local_import_entry_categories')
-          .select('entry_id,label')
-          .inFilter('entry_id', rows.map((r) => r['id'] as String).toList());
-      for (final label in labels) {
-        categoryLabels[label['entry_id'] as String] = label['label'] as String;
+      const labelBatchSize = 200;
+      for (var offset = 0; offset < rows.length; offset += labelBatchSize) {
+        final end = min(offset + labelBatchSize, rows.length);
+        final labels = await client
+            .from('local_import_entry_categories')
+            .select('entry_id,label')
+            .inFilter(
+              'entry_id',
+              rows.sublist(offset, end).map((r) => r['id'] as String).toList(),
+            );
+        for (final label in labels) {
+          categoryLabels[label['entry_id'] as String] =
+              label['label'] as String;
+        }
       }
     } on PostgrestException catch (error) {
       if (error.code != 'PGRST205' && error.code != '42P01') rethrow;

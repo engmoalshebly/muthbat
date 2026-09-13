@@ -6,6 +6,7 @@ import 'app/app.dart';
 import 'app/theme/app_colors.dart';
 import 'core/config/supabase_config.dart';
 import 'core/sync/sync_engine.dart';
+import 'core/sync/background_sync.dart';
 import 'features/local_ledger/local_ledger_store.dart';
 
 void main() async {
@@ -38,7 +39,14 @@ void main() async {
   }
 
   // 3. تشغيل محرك المزامنة الخلفي
-  if (SupabaseConfig.cloudReady) SyncEngine.instance.init();
+  if (SupabaseConfig.cloudReady) {
+    SyncEngine.instance.init();
+    try {
+      await configureBackgroundSync();
+    } catch (e) {
+      debugPrint('[Main] Background sync scheduling unavailable: $e');
+    }
+  }
 
   // ضبط شريط الحالة الافتراضي للواجهة
   SystemChrome.setSystemUIOverlayStyle(

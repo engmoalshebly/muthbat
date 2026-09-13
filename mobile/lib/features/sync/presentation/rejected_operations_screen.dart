@@ -6,6 +6,7 @@ import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_icons.dart';
 import '../../../core/database/app_database.dart';
 import '../../../core/sync/sync_engine.dart';
+import '../../../core/sync/sync_policy.dart';
 
 /// قائمة صريحة ودائمة للأوامر التي رفضها الخادم.
 /// لا تُحذف أي عملية مالية من هذه الشاشة؛ يمكن تصحيح السبب ثم إعادة المحاولة.
@@ -37,6 +38,11 @@ class _RejectedOperationsScreenState extends State<RejectedOperationsScreen> {
   Future<void> _retry(String requestId) async {
     await AppDatabase.instance.retryDeadLetterMutation(requestId);
     await SyncEngine.instance.triggerSync();
+    if (mounted) _refresh();
+  }
+
+  Future<void> _discard(String requestId) async {
+    await AppDatabase.instance.discardDeadLetterMutation(requestId);
     if (mounted) _refresh();
   }
 
@@ -80,6 +86,7 @@ class _RejectedOperationsScreenState extends State<RejectedOperationsScreen> {
               itemBuilder: (context, index) => _RejectedOperationCard(
                 operation: rows[index],
                 onRetry: _retry,
+                onDiscard: _discard,
               ),
             ),
           );
@@ -93,10 +100,12 @@ class _RejectedOperationCard extends StatelessWidget {
   const _RejectedOperationCard({
     required this.operation,
     required this.onRetry,
+    required this.onDiscard,
   });
 
   final Map<String, dynamic> operation;
   final Future<void> Function(String requestId) onRetry;
+  final Future<void> Function(String requestId) onDiscard;
 
   @override
   Widget build(BuildContext context) {
@@ -138,18 +147,48 @@ class _RejectedOperationCard extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 12),
-            Align(
-              alignment: AlignmentDirectional.centerEnd,
-              child: FilledButton.icon(
-                onPressed: () => onRetry(requestId),
-                icon: const Icon(AppIcons.sync),
-                label: const Text('إعادة المحاولة'),
-              ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (canDiscardSyncCommand(command))
+                  TextButton(
+                    onPressed: () => _confirmDiscard(context, requestId),
+                    child: const Text('تجاهل العملية'),
+                  ),
+                FilledButton.icon(
+                  onPressed: () => onRetry(requestId),
+                  icon: const Icon(AppIcons.sync),
+                  label: const Text('إعادة المحاولة'),
+                ),
+              ],
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _confirmDiscard(BuildContext context, String requestId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('تجاهل عملية غير مالية؟'),
+        content: const Text(
+          'سيُحذف طلب المزامنة فقط. لا يمكن تنفيذ هذا الإجراء للقيود المالية أو الأنواع غير المعروفة.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('تجاهل'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await onDiscard(requestId);
   }
 
   static Map<String, dynamic> _payload(dynamic raw) {
