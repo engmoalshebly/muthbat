@@ -17,8 +17,11 @@ class CustomerEntryDetailsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    if (ownerId != null && ref.watch(authControllerProvider.select((s) => s.userId)) != ownerId) {
-      return const Scaffold(body: Center(child: Text('تغير الحساب. افتح العملية من حسابك الحالي.')));
+    if (ownerId != null &&
+        ref.watch(authControllerProvider.select((s) => s.userId)) != ownerId) {
+      return const Scaffold(
+        body: Center(child: Text('تغير الحساب. افتح العملية من حسابك الحالي.')),
+      );
     }
     final date = DateTime.tryParse(entry['occurred_at']?.toString() ?? '');
     final type =
@@ -49,6 +52,12 @@ class CustomerEntryDetailsScreen extends ConsumerWidget {
         'resolved' => 'تمت معالجة الاعتراض',
         _ => 'لا يوجد اعتراض مسجل',
       },
+      if ((entry['dispute_resolution_note'] as String?)?.isNotEmpty == true)
+        'رد التاجر': entry['dispute_resolution_note'] as String,
+      if (entry['dispute_resolved_at'] != null)
+        'تاريخ معالجة الاعتراض': DateFormat('yyyy/MM/dd • HH:mm').format(
+          DateTime.parse(entry['dispute_resolved_at'] as String).toLocal(),
+        ),
       if (entry['is_reversed'] == true)
         'حالة القيد': 'تم عكسه بقيد تصحيحي؛ الأصل محفوظ',
       'مرجع العملية': entry['id']?.toString() ?? 'غير متاح',

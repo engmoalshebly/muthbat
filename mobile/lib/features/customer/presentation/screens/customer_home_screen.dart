@@ -449,15 +449,23 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
         ),
         actions: [
           IconButton(
+            tooltip: 'الانتقال إلى وضع التاجر',
+            icon: const Icon(Icons.storefront_outlined),
+            onPressed: () => Navigator.pushNamed(
+              context,
+              authState.requiresBusinessSetup
+                  ? AppRoutes.businessSetup
+                  : AppRoutes.merchantHome,
+            ),
+          ),
+          IconButton(
             tooltip: 'قفل التطبيق والبصمة',
             icon: const Icon(
               Icons.phonelink_lock_rounded,
               color: AppColors.textSecondary,
             ),
-            onPressed: () => Navigator.pushNamed(
-              context,
-              AppRoutes.appLockSettings,
-            ),
+            onPressed: () =>
+                Navigator.pushNamed(context, AppRoutes.appLockSettings),
           ),
           IconButton(
             tooltip: 'تسجيل الخروج',

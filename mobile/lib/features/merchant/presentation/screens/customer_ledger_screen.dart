@@ -123,6 +123,107 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
     );
   }
 
+  Future<void> _editCustomer() async {
+    final name = TextEditingController(text: _customer.localDisplayName);
+    final note = TextEditingController(text: _customer.localNote ?? '');
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('تحرير بيانات العميل'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: name,
+              decoration: const InputDecoration(labelText: 'الاسم'),
+            ),
+            TextField(
+              controller: note,
+              maxLines: 3,
+              decoration: const InputDecoration(labelText: 'ملاحظة داخلية'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, name.text.trim().length >= 2),
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true || !mounted) return;
+    final ok = await ref
+        .read(merchantControllerProvider.notifier)
+        .updateCustomer(
+          customerId: _customer.id,
+          displayName: name.text,
+          note: note.text,
+          creditLimit: _customer.creditLimit,
+          defaultDueDays: _customer.defaultDueDays,
+        );
+    if (!mounted) return;
+    if (ok) await _loadEntries();
+    if (!mounted) return;
+    final error = ref.read(merchantControllerProvider).lastError;
+    TopNotice.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok ? 'تم تحديث بيانات العميل' : (error ?? 'تعذر تحديث بيانات العميل'),
+        ),
+        backgroundColor: ok ? AppColors.success : AppColors.error,
+      ),
+    );
+  }
+
+  Future<void> _archiveCustomer() async {
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('أرشفة العميل؟'),
+        content: const Text(
+          'سيختفي من القائمة النشطة، مع بقاء قيوده وأرصدته محفوظة دون حذف.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('أرشفة'),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true || !mounted) return;
+    final ok = await ref
+        .read(merchantControllerProvider.notifier)
+        .archiveCustomer(_customer.id);
+    if (!mounted) return;
+    if (ok) {
+      TopNotice.of(context).showSnackBar(
+        const SnackBar(content: Text('تمت أرشفة العميل مع الاحتفاظ بسجله')),
+      );
+      Navigator.pop(context);
+    } else {
+      TopNotice.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            ref.read(merchantControllerProvider).lastError ??
+                'تعذر أرشفة العميل',
+          ),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    }
+  }
+
   void _showEntryActions(LedgerEntryModel entry) {
     if (entry.entryType == 'reversal' || entry.isReversed) return;
 
@@ -275,6 +376,16 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
           ],
         ),
         actions: [
+          if (ref.watch(merchantControllerProvider).isBusinessOwner)
+            PopupMenuButton<String>(
+              tooltip: 'إدارة العميل',
+              onSelected: (value) =>
+                  value == 'edit' ? _editCustomer() : _archiveCustomer(),
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: 'edit', child: Text('تحرير العميل')),
+                PopupMenuItem(value: 'archive', child: Text('أرشفة العميل')),
+              ],
+            ),
           IconButton(
             icon: const Icon(AppIcons.whatsapp),
             tooltip: 'مشاركة ملخص الحساب عبر واتساب',

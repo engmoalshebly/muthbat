@@ -39,6 +39,7 @@ class MerchantDashboardState {
   final String searchQuery;
   final List<DisputeModel> disputes;
   final int openDisputesCount;
+  final bool isBusinessOwner;
   final String? lastErrorCode;
   final String? lastError; // آخر رسالة خطأ حقيقية — تُعرض للمستخدم بدل الصمت
 
@@ -66,6 +67,7 @@ class MerchantDashboardState {
     this.searchQuery = '',
     this.disputes = const [],
     this.openDisputesCount = 0,
+    this.isBusinessOwner = false,
     this.lastError,
     this.lastErrorCode,
   });
@@ -94,6 +96,7 @@ class MerchantDashboardState {
     String? searchQuery,
     List<DisputeModel>? disputes,
     int? openDisputesCount,
+    bool? isBusinessOwner,
     String? lastError,
     String? lastErrorCode,
     bool clearError = false,
@@ -122,6 +125,7 @@ class MerchantDashboardState {
       searchQuery: searchQuery ?? this.searchQuery,
       disputes: disputes ?? this.disputes,
       openDisputesCount: openDisputesCount ?? this.openDisputesCount,
+      isBusinessOwner: isBusinessOwner ?? this.isBusinessOwner,
       lastError: clearError ? null : (lastError ?? this.lastError),
       lastErrorCode: clearError ? null : (lastErrorCode ?? this.lastErrorCode),
     );
@@ -267,6 +271,7 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
       }
 
       final businessId = activeBiz['id'] as String;
+      final isBusinessOwner = activeBiz['owner_user_id'] == currentUserId;
       final businessName = activeBiz['name'] as String? ?? '';
       final businessCity = activeBiz['city'] as String? ?? '';
       final businessType = activeBiz['business_type'] as String? ?? '';
@@ -393,10 +398,55 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
         currencyBreakdown: breakdown,
         disputes: disputes,
         openDisputesCount: openDisputes,
+        isBusinessOwner: isBusinessOwner,
         clearError: true,
       );
     } catch (e) {
       state = state.copyWith(isLoading: false, lastError: _friendlyError(e));
+    }
+  }
+
+  Future<bool> updateCustomer({
+    required String customerId,
+    required String displayName,
+    String? note,
+    double? creditLimit,
+    int? defaultDueDays,
+  }) async {
+    if (!state.isBusinessOwner) {
+      state = state.copyWith(
+        lastError: 'تعديل بيانات العميل متاح لمالك المتجر فقط',
+      );
+      return false;
+    }
+    try {
+      await _repository.updateCustomer(
+        customerId: customerId,
+        displayName: displayName,
+        note: note,
+        creditLimit: creditLimit,
+        defaultDueDays: defaultDueDays,
+      );
+      await loadDashboard();
+      return true;
+    } catch (e) {
+      state = state.copyWith(lastError: _friendlyError(e));
+      return false;
+    }
+  }
+
+  Future<bool> archiveCustomer(String customerId) async {
+    if (!state.isBusinessOwner) {
+      state = state.copyWith(lastError: 'أرشفة العميل متاحة لمالك المتجر فقط');
+      return false;
+    }
+    try {
+      await _repository.archiveCustomer(customerId);
+      await loadDashboard();
+      return true;
+    } catch (e) {
+      state = state.copyWith(lastError: _friendlyError(e));
+      return false;
     }
   }
 

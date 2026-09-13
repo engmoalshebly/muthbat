@@ -358,10 +358,6 @@ class _MerchantHomeScreenState extends ConsumerState<MerchantHomeScreen> {
         MuthbatNavItem(icon: AppIcons.profile, label: 'الملف'),
       ],
       onTap: (index) {
-        if (index == 3) {
-          Navigator.pushNamed(context, AppRoutes.merchantProfile);
-          return;
-        }
         setState(() => _currentTab = index);
       },
     );
@@ -2743,7 +2739,71 @@ class _MerchantHomeScreenState extends ConsumerState<MerchantHomeScreen> {
     ),
   );
 
-  Widget _buildProfileTab() => const SizedBox.shrink();
+  Widget _buildProfileTab() {
+    final state = ref.watch(merchantControllerProvider);
+    final auth = ref.watch(authControllerProvider);
+    return SafeArea(
+      child: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Text(
+            'الملف والإعدادات',
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 16),
+          Card(
+            child: ListTile(
+              leading: const CircleAvatar(child: Icon(AppIcons.profile)),
+              title: Text(auth.displayName ?? 'التاجر'),
+              subtitle: Text(
+                '${state.businessName}\n${auth.phoneNumber ?? ''}',
+              ),
+              isThreeLine: true,
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.settings_outlined),
+            title: const Text('إعدادات الحساب والمتجر'),
+            subtitle: Text(
+              state.isBusinessOwner
+                  ? 'الملف، الشعار، العملات، الفريق والأمان'
+                  : 'بيانات الحساب والأمان',
+            ),
+            trailing: const Icon(AppIcons.chevronEnd),
+            onTap: () => Navigator.pushNamed(
+              context,
+              state.isBusinessOwner
+                  ? AppRoutes.merchantProfile
+                  : AppRoutes.appLockSettings,
+            ),
+          ),
+          if (state.isBusinessOwner)
+            ListTile(
+              leading: const Icon(Icons.currency_exchange),
+              title: const Text('العملات المدعومة'),
+              subtitle: Text(state.supportedCurrencies.join('، ')),
+              trailing: const Icon(AppIcons.chevronEnd),
+              onTap: () =>
+                  Navigator.pushNamed(context, AppRoutes.currencySettings),
+            ),
+          ListTile(
+            leading: const Icon(Icons.phonelink_lock_outlined),
+            title: const Text('قفل التطبيق والبصمة'),
+            trailing: const Icon(AppIcons.chevronEnd),
+            onTap: () =>
+                Navigator.pushNamed(context, AppRoutes.appLockSettings),
+          ),
+          ListTile(
+            leading: const Icon(Icons.swap_horiz),
+            title: const Text('الانتقال إلى وضع العميل'),
+            subtitle: const Text('عرض حساباتك الشخصية لدى البقالات'),
+            trailing: const Icon(AppIcons.chevronEnd),
+            onTap: () => Navigator.pushNamed(context, AppRoutes.customerHome),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// ورقة اختيار العميل التفاعلية عند تسجيل دين أو سداد

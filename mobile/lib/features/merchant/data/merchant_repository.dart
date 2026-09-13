@@ -346,6 +346,67 @@ class MerchantRepository {
     return BusinessCustomerModel.fromMap(row, currencyBals);
   }
 
+  Future<void> updateCustomer({
+    required String customerId,
+    required String displayName,
+    String? note,
+    double? creditLimit,
+    int? defaultDueDays,
+  }) async {
+    final result = await Supabase.instance.client.rpc(
+      'update_business_customer_profile',
+      params: {
+        'p_business_customer_id': customerId,
+        'p_display_name': displayName.trim(),
+        'p_note': note?.trim(),
+        'p_credit_limit': creditLimit,
+        'p_default_due_days': defaultDueDays,
+      },
+    );
+    if (result is! Map || result['updated'] != true) {
+      throw const MerchantApiException(
+        code: 'not_updated',
+        message: 'لم يؤكد الخادم حفظ بيانات العميل',
+      );
+    }
+    final db = await AppDatabase.instance.database;
+    await db.update(
+      'local_business_customers',
+      {
+        'local_display_name': displayName.trim(),
+        'local_note': note?.trim(),
+        'credit_limit': creditLimit,
+        'default_due_days': defaultDueDays,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      },
+      where: 'id = ?',
+      whereArgs: [customerId],
+    );
+  }
+
+  Future<void> archiveCustomer(String customerId) async {
+    final result = await Supabase.instance.client.rpc(
+      'archive_business_customer',
+      params: {'p_business_customer_id': customerId},
+    );
+    if (result is! Map || result['archived'] != true) {
+      throw const MerchantApiException(
+        code: 'not_archived',
+        message: 'لم يؤكد الخادم أرشفة العميل',
+      );
+    }
+    final db = await AppDatabase.instance.database;
+    await db.update(
+      'local_business_customers',
+      {
+        'is_archived': 1,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      },
+      where: 'id = ?',
+      whereArgs: [customerId],
+    );
+  }
+
   /// قراءة القيود المالية للعميل من الكاش المحلي
   Future<List<LedgerEntryModel>> getLedgerEntries(
     String businessCustomerId, {

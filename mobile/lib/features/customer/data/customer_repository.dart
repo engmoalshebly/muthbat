@@ -116,7 +116,7 @@ class CustomerRepository {
     final result = await _client
         .from('ledger_timeline')
         .select(
-          'id,business_customer_id,entry_type,direction,amount,currency_code,description,occurred_at,confirmation_status,dispute_status,is_reversed',
+          'id,business_customer_id,entry_type,direction,amount,currency_code,description,occurred_at,confirmation_status,dispute_status,is_reversed,dispute_resolution_note,dispute_resolved_at',
         )
         .eq('business_customer_id', businessCustomerId)
         .eq('currency_code', currency)
