@@ -11,6 +11,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../app/router/app_routes.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/config/supabase_config.dart';
+import '../../core/database/db_encryption.dart';
 import '../auth/presentation/controllers/auth_controller.dart';
 import '../auth/presentation/validators/auth_validators.dart';
 import 'local_ledger_store.dart';
@@ -138,8 +139,7 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                   CheckboxListTile(
                     contentPadding: EdgeInsets.zero,
                     value: protect,
-                    onChanged: (v) =>
-                        setDialogState(() => protect = v ?? true),
+                    onChanged: (v) => setDialogState(() => protect = v ?? true),
                     title: const Text('حماية النسخة بكلمة مرور'),
                     controlAffinity: ListTileControlAffinity.leading,
                   ),
@@ -557,9 +557,8 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
   }
 
   Future<void> activateCloud() async {
-    final categoryCount = (doc?['entries'] as List? ?? [])
-        .where((e) => e['category'] != null)
-        .length;
+    final summary = LocalLedgerStore.transferSummary(doc!);
+    final categoryCount = summary['category_count'] as int;
     if (!SupabaseConfig.cloudReady) {
       throw StateError(
         'الاتصال بالحساب غير متاح في هذه النسخة. يمكنك مواصلة العمل محليًا.',
@@ -580,17 +579,40 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('تفعيل الحفظ السحابي'),
-        content: Text(
-          'سيُضاف دفتر «${doc!['name']}» كبقالة مستقلة إلى حساب ${user.phone ?? ''}. لن تُدمج بقالة أخرى معه. يتوقف تعديل الدفتر أثناء النقل؛ إذا انقطع الاتصال أعد المحاولة بالحساب نفسه.',
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'سيُنشأ متجر مستقل باسم «${doc!['name']}» في حساب ${user.phone ?? ''}. لن يُدمج مع أي متجر موجود.',
+              ),
+              const SizedBox(height: 16),
+              Text('العملاء: ${summary['customer_count']}'),
+              Text('القيود: ${summary['entry_count']}'),
+              Text('التصنيفات: ${summary['category_count']}'),
+              Text('العملة: ${summary['currency']}'),
+              Text(
+                'صافي الأرصدة: ${LocalLedgerStore.money(summary['balance_minor'] as int)} ${summary['currency']}',
+              ),
+              Text(
+                'عملاء عليهم رصيد: ${summary['positive_balance_count']} • أرصدة مقدمة: ${summary['advance_balance_count']}',
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'ستُنشأ نسخة احتياطية مشفرة تلقائيًا قبل الرفع. بعد الحجز لا يمكن نقل الدفتر إلى حساب آخر، وإذا انقطع الاتصال يمكنك الاستئناف بالحساب نفسه.',
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('لاحقًا'),
+            child: const Text('إلغاء النقل'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('ربط الدفتر'),
+            child: const Text('إنشاء متجر مستقل ونقل الدفتر'),
           ),
         ],
       ),
@@ -607,15 +629,38 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
         'خدمة نقل الدفتر لم تصبح متاحة بعد. تابع العمل محليًا واحتفظ بنسخة احتياطية.',
       );
     }
-    if (importVersion is! int || importVersion < (categoryCount > 0 ? 2 : 1)) {
+    if (importVersion is! int || importVersion < 3) {
       throw StateError(
         'يلزم تحديث خدمة النقل لحفظ التصنيفات. دفتر الحساب ما زال متاحًا محليًا.',
       );
     }
     final snapshot = await store.reserveTransfer(user.id);
+    final backupDirectory = await getApplicationSupportDirectory();
+    final transferBackupDirectory = Directory(
+      '${backupDirectory.path}/transfer-backups',
+    );
+    await transferBackupDirectory.create(recursive: true);
+    final backupPassword = await DbEncryptionKeyStore().passphraseFor(
+      'local_transfer_backup_${snapshot['id']}',
+    );
+    final backupFile = File(
+      '${transferBackupDirectory.path}/${snapshot['id']}.json.enc',
+    );
+    if (!await backupFile.exists()) {
+      await backupFile.writeAsString(
+        await store.backup(password: backupPassword),
+        flush: true,
+      );
+    }
+    await store.markTransferCheckpoint(
+      user.id,
+      'backup_created',
+      backupPath: backupFile.path,
+    );
     final result = await client
         .rpc('import_local_notebook', params: {'p_notebook': snapshot})
         .timeout(const Duration(seconds: 60));
+    await store.markTransferCheckpoint(user.id, 'uploaded');
     if (client.auth.currentUser?.id != user.id) {
       throw StateError(
         'تغيّر الحساب. أعد تسجيل الدخول بالحساب المرتبط لاستكمال النقل.',
@@ -630,6 +675,24 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
         'لم يكتمل التحقق من النقل. أعد المحاولة؛ النسخة المحلية محفوظة.',
       );
     }
+    final verification = await client
+        .rpc(
+          'verify_local_notebook_import',
+          params: {'p_notebook_id': snapshot['id']},
+        )
+        .timeout(const Duration(seconds: 30));
+    if (verification is! Map ||
+        verification['verified'] != true ||
+        verification['customer_count'] != summary['customer_count'] ||
+        verification['entry_count'] != summary['entry_count'] ||
+        verification['category_count'] != summary['category_count'] ||
+        verification['currency'] != summary['currency'] ||
+        verification['balance_minor'] != summary['balance_minor']) {
+      throw StateError(
+        'بيانات الخادم لا تطابق الدفتر المحلي. لم يُعلن نجاح النقل ويمكن استئنافه بأمان.',
+      );
+    }
+    await store.markTransferCheckpoint(user.id, 'verified');
     await store.completeTransfer(user.id, result['business_id']);
     await reload();
     if (mounted) {
@@ -749,10 +812,7 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                 } else if (v == 'account') {
                   await openAccount();
                 } else if (v == 'lock' && mounted) {
-                  await Navigator.pushNamed(
-                    context,
-                    AppRoutes.appLockSettings,
-                  );
+                  await Navigator.pushNamed(context, AppRoutes.appLockSettings);
                 }
               }),
               itemBuilder: (_) => const [

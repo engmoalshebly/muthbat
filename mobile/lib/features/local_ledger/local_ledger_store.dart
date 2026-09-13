@@ -102,6 +102,8 @@ class LocalLedgerStore {
       'entries': <JsonMap>[],
       'owner_id': null,
       'transfer_state': 'local',
+      'transfer_checkpoint': 'not_started',
+      'transfer_backup_path': null,
       'server_business_id': null,
     };
     validate(doc);
@@ -281,8 +283,29 @@ class LocalLedgerStore {
     doc['owner_id'] = userId;
     if (doc['transfer_state'] != 'complete') {
       doc['transfer_state'] = 'transferring';
+      doc['transfer_checkpoint'] = 'reserved';
     }
     return jsonDecode(jsonEncode(doc)) as JsonMap;
+  });
+
+  Future<void> markTransferCheckpoint(
+    String userId,
+    String checkpoint, {
+    String? backupPath,
+  }) => _edit((doc) {
+    if (doc['owner_id'] != userId) {
+      throw StateError('تغيّر الحساب أثناء النقل');
+    }
+    if (!{
+      'reserved',
+      'backup_created',
+      'uploaded',
+      'verified',
+    }.contains(checkpoint)) {
+      throw ArgumentError.value(checkpoint, 'checkpoint');
+    }
+    doc['transfer_checkpoint'] = checkpoint;
+    if (backupPath != null) doc['transfer_backup_path'] = backupPath;
   });
 
   Future<void> completeTransfer(String userId, String businessId) => _edit((
@@ -290,6 +313,7 @@ class LocalLedgerStore {
   ) {
     if (doc['owner_id'] != userId) throw StateError('تغيّر الحساب أثناء النقل');
     doc['transfer_state'] = 'complete';
+    doc['transfer_checkpoint'] = 'complete';
     doc['server_business_id'] = businessId;
   });
 
@@ -443,6 +467,25 @@ class LocalLedgerStore {
                 ? e['minor'] as int
                 : -(e['minor'] as int)),
       );
+
+  static JsonMap transferSummary(JsonMap doc) {
+    final customers = doc['customers'] as List;
+    final entries = doc['entries'] as List;
+    final balances = <String, int>{};
+    for (final customer in customers) {
+      balances[customer['id'] as String] = balance(doc, customer['id']);
+    }
+    return {
+      'customer_count': customers.length,
+      'entry_count': entries.length,
+      'category_count': entries.where((e) => e['category'] != null).length,
+      'currency': doc['currency'],
+      'balance_minor': balances.values.fold<int>(0, (a, b) => a + b),
+      'positive_balance_count': balances.values.where((v) => v > 0).length,
+      'advance_balance_count': balances.values.where((v) => v < 0).length,
+    };
+  }
+
   static String money(int minor) => Money.fromMinorUnits(
     minor,
   ).toDecimalString().replaceFirst(RegExp(r'\.?0+$'), '');
@@ -469,6 +512,18 @@ class LocalLedgerStore {
           'complete',
         }.contains(doc['transfer_state'])) {
       throw const FormatException('بيانات الدفتر غير صالحة');
+    }
+    final checkpoint = doc['transfer_checkpoint'];
+    if (checkpoint != null &&
+        !{
+          'not_started',
+          'reserved',
+          'backup_created',
+          'uploaded',
+          'verified',
+          'complete',
+        }.contains(checkpoint)) {
+      throw const FormatException('نقطة استئناف النقل غير صالحة');
     }
     if ((doc['owner_id'] != null && !id(doc['owner_id'])) ||
         (doc['transfer_state'] != 'local' && !id(doc['owner_id'])) ||

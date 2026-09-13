@@ -317,10 +317,7 @@ void main() {
             '${folder.path}/restored-${DateTime.now().microsecondsSinceEpoch}.db',
       );
 
-      await expectLater(
-        (await freshStore()).restore(text),
-        throwsStateError,
-      );
+      await expectLater((await freshStore()).restore(text), throwsStateError);
       await expectLater(
         (await freshStore()).restore(text, password: 'wrong-password'),
         throwsStateError,
@@ -343,6 +340,7 @@ void main() {
         amount: '50',
       );
       final first = await store.reserveTransfer(owner);
+      expect(first['transfer_checkpoint'], 'reserved');
       expect(await store.reserveTransfer(owner), first);
       await expectLater(store.reserveTransfer(other), throwsStateError);
       await expectLater(
@@ -355,9 +353,55 @@ void main() {
         throwsStateError,
       );
       await expectLater(store.completeTransfer(other, other), throwsStateError);
+      await store.markTransferCheckpoint(
+        owner,
+        'backup_created',
+        backupPath: '/private/transfer-backup.enc',
+      );
+      expect((await store.current())!['transfer_checkpoint'], 'backup_created');
+      await store.markTransferCheckpoint(owner, 'uploaded');
+      await store.markTransferCheckpoint(owner, 'verified');
       await store.completeTransfer(owner, other);
       expect((await store.current())!['transfer_state'], 'complete');
+      expect((await store.current())!['transfer_checkpoint'], 'complete');
       expect(LocalLedgerStore.balance((await store.current())!, id), 500000);
     },
   );
+
+  test('transfer review reports exact counts currency and balances', () async {
+    final customer = await store.record(
+      description: 'دين محلي',
+      customerName: 'عميل مدين',
+      type: 'debt',
+      amount: '12.3456',
+      category: 'مواد غذائية',
+    );
+    await store.record(
+      description: 'دفعة محلية',
+      customerId: customer,
+      type: 'payment',
+      amount: '2.3456',
+    );
+    final advance = await store.record(
+      description: 'دين مؤقت',
+      customerName: 'عميل مقدم',
+      type: 'debt',
+      amount: '1',
+    );
+    await store.record(
+      description: 'دفعة مقدمة',
+      customerId: advance,
+      type: 'payment',
+      amount: '2',
+    );
+    expect(LocalLedgerStore.transferSummary((await store.current())!), {
+      'customer_count': 2,
+      'entry_count': 4,
+      'category_count': 1,
+      'currency': 'YER',
+      'balance_minor': 90000,
+      'positive_balance_count': 1,
+      'advance_balance_count': 1,
+    });
+  });
 }
