@@ -369,12 +369,29 @@ describe('SessionService', () => {
   describe('onModuleInit', () => {
     it('should reset active sessions to DISCONNECTED on startup', async () => {
       (repository.update as jest.Mock).mockResolvedValue({ affected: 3 });
+      (repository.find as jest.Mock).mockResolvedValue([]);
 
       await service.onModuleInit();
 
       expect(repository.update).toHaveBeenCalledWith(expect.objectContaining({ status: expect.anything() as string }), {
         status: SessionStatus.DISCONNECTED,
       });
+    });
+
+    it('should resume authenticated sessions without requiring a new QR code', async () => {
+      const session = createMockSession({
+        status: SessionStatus.READY,
+        phone: '967700000000',
+        config: { autoReconnect: true },
+      });
+      (repository.update as jest.Mock).mockResolvedValue({ affected: 1 });
+      (repository.find as jest.Mock).mockResolvedValue([session]);
+      (repository.findOne as jest.Mock).mockResolvedValue(session);
+
+      await service.onModuleInit();
+
+      expect(engineFactory.create).toHaveBeenCalledWith(expect.objectContaining({ sessionId: session.name }));
+      expect(mockEngine.initialize).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -7,7 +7,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
-import { Repository, In, DataSource } from 'typeorm';
+import { Repository, In, DataSource, IsNull, Not } from 'typeorm';
 import { Session, SessionStatus } from './entities/session.entity';
 import { CreateSessionDto } from './dto';
 import { EngineFactory } from '../../engine/engine.factory';
@@ -45,10 +45,8 @@ export class SessionService implements OnModuleDestroy, OnModuleInit {
     private readonly hookManager: HookManager,
   ) {}
 
-  /**
-   * On backend startup, reset all active session statuses to disconnected
-   * because the engines are not running yet after restart
-   */
+  /** Reset stale runtime statuses, then resume sessions with stored WhatsApp
+   * credentials. A session can opt out with config.autoReconnect=false. */
   async onModuleInit(): Promise<void> {
     const activeStatuses = [
       SessionStatus.READY,
@@ -67,6 +65,33 @@ export class SessionService implements OnModuleDestroy, OnModuleInit {
         action: 'startup_reset',
         affected: result.affected,
       });
+    }
+
+    const resumableSessions =
+      (await this.sessionRepository.find({
+        where: { phone: Not(IsNull()) },
+        order: { createdAt: 'ASC' },
+      })) ?? [];
+
+    for (const session of resumableSessions) {
+      const config = session.config as { autoReconnect?: boolean } | null;
+      if (config?.autoReconnect === false) continue;
+      try {
+        await this.start(session.id);
+        this.logger.log(`Resuming authenticated session: ${session.name}`, {
+          sessionId: session.id,
+          action: 'startup_resume',
+        });
+      } catch (error) {
+        this.logger.error(
+          `Unable to resume session ${session.name}`,
+          error instanceof Error ? error.stack || error.message : String(error),
+          {
+            sessionId: session.id,
+            action: 'startup_resume_failed',
+          },
+        );
+      }
     }
   }
 
