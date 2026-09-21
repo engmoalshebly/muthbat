@@ -20,12 +20,8 @@
 #   - Include administrators (لا استثناءات).
 #   - ممنوع الـ force push على main.
 #
-# ملاحظات حالة متوقعة (موثقة في الخطة §8 و§9):
-#   - مرحلة supabase-db ستكون حمراء حتى إصلاح/تجميد الترحيل 0012 (X-1) — مقصود.
-#   - فحص الأسرار سيكون أحمر حتى تدوير سر OpenWA وحذفه من الكود والتاريخ — مقصود.
-#   - مرحلتا edge-unit/edge-integration تعتمدان على ملفات اختبار يُنشئها وكلاء
-#     آخرون (خطوات 8–10)؛ حتى ذلك الحين تفشل edge-integration لعدم وجود
-#     supabase/functions/tests/integration/ — مقصود كبوابة.
+# كل مرحلة أدناه مطلوبة فعليًا. لا توجد اختبارات أو أسرار تجريبية مستثناة من
+# بوابة الدمج.
 # =============================================================================
 
 name: ci
@@ -114,8 +110,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
       - name: Run pure-logic unit tests
-        # لا --allow-net عمداً: أي استيراد يسحب شبكة في اختبار وحدة يفشل (قرار 2)
-        run: deno test --allow-env supabase/functions/
+        run: deno test --allow-env supabase/functions/tests/unit/
 
   # ---------------------------------------------------------------------------
   # المرحلة 4 — اختبارات تكامل Edge Functions (الخطوة 10 / EF-I01..I07)
@@ -136,8 +131,27 @@ jobs:
       - name: Start local stack
         run: supabase start --yes
       - name: Serve functions
-        run: supabase functions serve --no-verify-jwt > functions.log 2>&1 &
+        run: |
+          eval "$(supabase status -o env)"
+          export SUPABASE_URL="$API_URL"
+          export SUPABASE_ANON_KEY="$ANON_KEY"
+          export SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY"
+          supabase functions serve --no-verify-jwt --env-file supabase/.env > functions.log 2>&1 &
+      - name: Wait for Edge runtime
+        run: |
+          for attempt in $(seq 1 30); do
+            status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              -X POST http://127.0.0.1:55321/functions/v1/verify-statement \
+              -H 'content-type: application/json' \
+              -d '{"code":"bad"}' || true)
+            if [[ "$status" =~ ^[1-5][0-9][0-9]$ ]]; then exit 0; fi
+            sleep 1
+          done
+          cat functions.log
+          exit 1
       - name: Run HTTP integration suite
+        env:
+          FUNCTIONS_BASE_URL: http://127.0.0.1:55321/functions/v1
         run: deno test --allow-net --allow-env supabase/functions/tests/integration/
       - name: Dump functions log on failure
         if: failure()
@@ -176,11 +190,49 @@ jobs:
           echo "lines=$TOTAL hit=$HIT"
           # مرحلة 1: فرض عتبة 70% على lib/core/ (fix-plan/08-testing-ci.md §7)
 
+  openwa:
+    name: openwa (test + build)
+    needs: secrets
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: OpenWA
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: OpenWA/package-lock.json
+      - run: npm ci
+      - run: npm test -- --runInBand
+      - run: npm run build
+      - run: npm run dashboard:build
+      - name: Dependency security gate
+        run: npm audit --omit=dev --audit-level=critical
+
+  insurance-demo:
+    name: insurance-demo (isolated contract tests)
+    needs: secrets
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: insurance-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: insurance-backend/requirements.txt
+      - run: python -m pip install -r requirements.txt
+      - run: python manage.py test
+
   # ---------------------------------------------------------------------------
-  # المرحلة 5ب — بناء APK للإصدار (فقط عند الدمج في main)
+  # المرحلة 5ب — بناء AAB موقّع للإصدار (فقط عند الدمج في main)
   # ---------------------------------------------------------------------------
   flutter-build:
-    name: flutter-build (APK)
+    name: flutter-build (signed AAB)
     needs: flutter
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -195,17 +247,35 @@ jobs:
           cache: true
       - name: Install dependencies
         run: flutter pub get
-      - name: Build release APK
+      - name: Configure production upload keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
         run: |
-          flutter build apk --release \
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          test -n "$ANDROID_KEY_ALIAS"
+          test -n "$ANDROID_KEY_PASSWORD"
+          test -n "$ANDROID_STORE_PASSWORD"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/muthbat-upload.jks
+          cat > android/key.properties <<EOF
+          storeFile=muthbat-upload.jks
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
+          storePassword=$ANDROID_STORE_PASSWORD
+          EOF
+      - name: Build signed release AAB
+        run: |
+          flutter build appbundle --release \
             --dart-define=SUPABASE_URL=${{ secrets.SUPABASE_URL }} \
             --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }} \
             --dart-define=APP_ENV=prod
-      - name: Upload APK artifact
+      - name: Upload signed AAB artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-apk
-          path: mobile/build/app/outputs/flutter-apk/app-release.apk
+          name: release-aab
+          path: mobile/build/app/outputs/bundle/release/app-release.aab
           retention-days: 30
 
   # ---------------------------------------------------------------------------
@@ -221,6 +291,8 @@ jobs:
       - edge-unit
       - edge-integration
       - flutter
+      - openwa
+      - insurance-demo
     runs-on: ubuntu-latest
     steps:
       - name: All required stages passed

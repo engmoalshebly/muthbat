@@ -4,4 +4,6 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Local Supabase on the Android emulator is HTTP in development only. -->
+    <application android:usesCleartextTraffic="true" />
 </manifest>

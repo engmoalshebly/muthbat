@@ -17,7 +17,9 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 COPY package*.json ./
 
 # Install backend dependencies
-RUN npm ci
+# Build sqlite3 against the image's GLIBC instead of using a prebuilt binary
+# that may target a newer distribution than node:22-slim.
+RUN npm ci --build-from-source=sqlite3
 
 # Copy source code
 COPY . .
@@ -77,4 +79,3 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 # Start with dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "dist/main"]
-

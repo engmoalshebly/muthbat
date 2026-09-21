@@ -42,6 +42,7 @@ debt-ledger-supabase/logos/
 .idea/
 .vscode/
 .local-backups/
+.local/
 *.iml
 .DS_Store
 Thumbs.db

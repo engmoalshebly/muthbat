@@ -1,0 +1,6 @@
+# Copy to android/key.properties on a secure build host.
+# This file is intentionally not committed with real values.
+storeFile=muthbat-upload.jks
+keyAlias=muthbat-upload
+keyPassword=replace-in-secret-manager
+storePassword=replace-in-secret-manager

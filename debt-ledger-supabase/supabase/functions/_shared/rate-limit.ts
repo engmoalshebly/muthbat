@@ -1,4 +1,5 @@
 import { serviceClient } from "./supabase.ts";
+export { requestAddress } from "./request-address.ts";
 
 export class RateLimitExceededError extends Error {
   constructor(public readonly retryAfterSeconds = 60) {
@@ -13,21 +14,6 @@ type RateLimitRule = {
   maxHits: number;
   windowSeconds: number;
 };
-
-function firstForwardedValue(value: string | null): string | null {
-  const first = value?.split(",")[0]?.trim();
-  return first || null;
-}
-
-/** Prefer a proxy-provided address and never trust a client-supplied arbitrary header in production. */
-export function requestAddress(request: Request): string {
-  return (
-    request.headers.get("cf-connecting-ip") ??
-    request.headers.get("x-real-ip") ??
-    firstForwardedValue(request.headers.get("x-forwarded-for")) ??
-    "unknown"
-  );
-}
 
 async function stableKey(value: string): Promise<string> {
   const bytes = new TextEncoder().encode(value);
@@ -53,4 +39,3 @@ export async function enforceRateLimits(rules: RateLimitRule[]): Promise<void> {
     }
   }
 }
-

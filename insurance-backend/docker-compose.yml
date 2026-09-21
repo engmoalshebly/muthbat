@@ -1,0 +1,21 @@
+services:
+  insurance-api:
+    profiles: ["demo"]
+    build: .
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      INSURANCE_ENV: ${INSURANCE_ENV:-demo}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-unsafe-development-only-key}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      ENABLE_TEST_PAYMENTS: ${ENABLE_TEST_PAYMENTS:-true}
+      TEST_API_USERNAME: ${TEST_API_USERNAME:-}
+      TEST_API_PASSWORD: ${TEST_API_PASSWORD:-}
+      TZ: ${TZ:-Asia/Riyadh}
+      SQLITE_PATH: /app/data/db.sqlite3
+    volumes:
+      - insurance_data:/app/data
+volumes:
+  insurance_data:

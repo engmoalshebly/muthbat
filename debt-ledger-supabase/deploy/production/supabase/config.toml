@@ -1,0 +1,57 @@
+project_id = "muthbat-prod"
+
+[auth]
+site_url = "debtledger://login-callback"
+additional_redirect_urls = ["debtledger://login-callback"]
+jwt_expiry = 900
+enable_signup = false
+enable_anonymous_sign_ins = false
+minimum_password_length = 12
+
+[auth.email]
+enabled = false
+enable_signup = false
+
+# Account creation and recovery are handled only by the server-side WhatsApp OTP flow.
+[auth.sms]
+enable_signup = false
+enable_confirmations = true
+
+[auth.sms.twilio_verify]
+enabled = false
+
+[functions.bootstrap-user-contact]
+verify_jwt = true
+
+[functions.customer-directory]
+verify_jwt = true
+
+[functions.member-invite]
+verify_jwt = true
+
+[functions.signed-document-upload]
+verify_jwt = true
+
+[functions.finalize-document-upload]
+verify_jwt = true
+
+[functions.generate-statement]
+verify_jwt = true
+
+[functions.combine-statements]
+verify_jwt = true
+
+[functions.verify-statement]
+verify_jwt = false
+
+[functions.send-whatsapp-otp]
+verify_jwt = false
+
+[functions.verify-whatsapp-otp]
+verify_jwt = false
+
+[functions.process-notification-outbox]
+verify_jwt = true
+
+[functions.process-automation-rules]
+verify_jwt = true
