@@ -41,6 +41,7 @@ services:
       - HTTPS_ENABLED=${HTTPS_ENABLED:-false}
       - PORT=2785
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:2886}
       # Database
       - DATABASE_TYPE=${DATABASE_TYPE:-sqlite}
       - DATABASE_NAME=${DATABASE_NAME:-/app/data/openwa.sqlite}

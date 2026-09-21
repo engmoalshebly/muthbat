@@ -1,6 +1,7 @@
-# التشغيل المحلي الكامل
+# التشغيل الكامل على جهاز التطوير أو السيرفر
 
-هذا التشغيل مخصص للتطوير والاختبار المحلي فقط، ولا يستخدم مشروع Supabase Production.
+هذا التشغيل مخصص للتطوير والاختبار أو لسيرفر مستقل عبر عنوان IP. لا يستخدم
+مشروع Supabase Production ولا ينبغي عرضه للعامة بدون HTTPS وحماية جدار ناري.
 
 ## التشغيل
 
@@ -8,6 +9,12 @@
 
 ```bash
 ./scripts/local-up.sh
+```
+
+يكتشف السكربت عنوان IPv4 للسيرفر تلقائياً. يمكن تحديده يدوياً عند الحاجة:
+
+```bash
+SERVER_IP=217.216.79.195 ./scripts/local-up.sh
 ```
 
 السكربت يشغّل:
@@ -22,13 +29,19 @@
 
 | الخدمة | العنوان |
 |---|---|
-| Supabase API | `http://127.0.0.1:55321` |
-| Supabase Studio | `http://127.0.0.1:55323` |
-| OpenWA API | `http://127.0.0.1:2785` |
-| OpenWA Dashboard | `http://127.0.0.1:2886` |
-| Insurance Demo | `http://127.0.0.1:8000` |
+| Supabase API | `http://SERVER_IP:55321` |
+| Supabase Studio | `http://SERVER_IP:55323` |
+| OpenWA API | `http://SERVER_IP:2785` |
+| OpenWA Dashboard | `http://SERVER_IP:2886` |
+| Insurance Demo | `http://SERVER_IP:8000` |
 
-لـ Android Emulator يستخدم التطبيق تلقائيًا `http://10.0.2.2:55321` للوصول إلى Supabase على جهاز التطوير.
+للهاتف الحقيقي استخدم عنوان السيرفر عبر الأمر الجاهز:
+
+```bash
+./scripts/run-mobile-ip.sh
+```
+
+أما Android Emulator على نفس الجهاز فيمكنه استخدام `http://10.0.2.2:55321`.
 
 ## ربط WhatsApp المحلي
 
@@ -43,9 +56,11 @@ http://127.0.0.1:2886
 ## تشغيل التطبيق
 
 ```bash
-cd mobile
-flutter run --dart-define=APP_ENV=dev
+./scripts/run-mobile-ip.sh
 ```
+
+الأمر يمرر عنوان Supabase العام ومفتاح `anon` المحلي تلقائياً، ولا يحفظ المفتاح
+في Git.
 
 ## الإيقاف
 
@@ -63,3 +78,7 @@ curl http://127.0.0.1:8000/api/v1/health
 ```
 
 خدمة التأمين Demo فقط، ولا تستخدمها كخدمة تأمين حقيقية أو كواجهة عامة.
+
+منافذ IP الحالية مخصصة للاختبار: `55321`, `55323`, `2785`, `2886`, و`8000`.
+في الإنتاج أغلقها خلف HTTPS وReverse Proxy، وأنشئ مشروع Supabase Production
+مستقلاً.

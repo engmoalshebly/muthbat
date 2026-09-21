@@ -9,6 +9,13 @@ OPENWA_DIR="$ROOT_DIR/OpenWA"
 OPENWA_ENV="$OPENWA_DIR/.env"
 INSURANCE_DIR="$ROOT_DIR/insurance-backend"
 INSURANCE_ENV="$INSURANCE_DIR/.env"
+SERVER_IP="${SERVER_IP:-$(hostname -I | awk '{for (i = 1; i <= NF; i++) if ($i !~ /:/ && $i != "127.0.0.1") { print $i; exit }}')}"
+
+if [[ -z "$SERVER_IP" ]]; then
+  echo "Could not detect the server IPv4 address. Set SERVER_IP explicitly." >&2
+  exit 1
+fi
+PUBLIC_ORIGIN="http://${SERVER_IP}"
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -65,15 +72,19 @@ echo "Starting local Supabase..."
 echo "Starting OpenWA API, dashboard, and local dependencies..."
 (
   cd "$OPENWA_DIR"
-  docker compose --profile postgres --profile with-dashboard --profile with-proxy up -d --build
+  DOMAIN="$SERVER_IP" \
+    API_BIND_IP=0.0.0.0 \
+    DASHBOARD_BIND_IP=0.0.0.0 \
+    CORS_ORIGINS="$PUBLIC_ORIGIN:2886,http://localhost:2886,debtledger://" \
+    docker compose --profile postgres --profile with-dashboard --profile with-proxy up -d --build
 )
 
 echo "Starting isolated insurance demo..."
 (
   cd "$INSURANCE_DIR"
   INSURANCE_ENV=demo \
-    DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1 \
-    PUBLIC_BASE_URL=http://localhost:8000 \
+    DJANGO_ALLOWED_HOSTS="$SERVER_IP,localhost,127.0.0.1" \
+    PUBLIC_BASE_URL="$PUBLIC_ORIGIN:8000" \
     ENABLE_TEST_PAYMENTS=true \
     docker compose --profile demo up -d --build
 )
@@ -88,6 +99,7 @@ echo "Starting local Supabase Edge Functions..."
   export OPENWA_BASE_URL=http://127.0.0.1:2785
   export OPENWA_SESSION_ID=default
   export OPENWA_API_KEY="$openwa_api_key"
+  export ALLOWED_ORIGIN="$PUBLIC_ORIGIN:55321,$PUBLIC_ORIGIN:2886,debtledger://"
   if curl --silent --output /dev/null --write-out '%{http_code}' \
       -X POST http://127.0.0.1:55321/functions/v1/verify-statement \
       -H 'content-type: application/json' -d '{"code":"bad"}' | grep -q '^422$'; then
@@ -116,12 +128,12 @@ for attempt in $(seq 1 40); do
 done
 
 echo
-echo "Local stack is ready."
-echo "  Mobile Supabase: http://10.0.2.2:55321 (Android emulator)"
-echo "  Supabase Studio: http://127.0.0.1:55323"
-echo "  OpenWA API:      http://127.0.0.1:2785"
-echo "  OpenWA dashboard: http://127.0.0.1:2886"
-echo "  Insurance demo:  http://127.0.0.1:8000"
+echo "Server-IP stack is ready at $SERVER_IP."
+echo "  Mobile Supabase: http://$SERVER_IP:55321"
+echo "  Supabase Studio: http://$SERVER_IP:55323"
+echo "  OpenWA API:      http://$SERVER_IP:2785"
+echo "  OpenWA dashboard: http://$SERVER_IP:2886"
+echo "  Insurance demo:  http://$SERVER_IP:8000"
 echo
 echo "Run the mobile app with:"
-echo "  cd mobile && flutter run --dart-define=APP_ENV=dev"
+echo "  ./scripts/run-mobile-ip.sh"
