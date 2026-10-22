@@ -1,5 +1,6 @@
 -- Synthetic fixtures roll back. Exercises real grants/RLS and both RPC signatures.
 begin;
+select plan(1);
 
 insert into auth.users(instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,raw_app_meta_data,raw_user_meta_data,created_at,updated_at)
 select '00000000-0000-0000-0000-000000000000',id::uuid,'authenticated','authenticated',email,'unused',now(),'{}','{}',now(),now()
@@ -92,4 +93,6 @@ do $$ begin
  if has_function_privilege('anon','public.add_dispute_message(uuid,text,uuid,text)','execute') then raise exception 'Anonymous execute granted'; end if;
  if has_table_privilege('authenticated','public.businesses','UPDATE') then raise exception 'Broad table UPDATE granted'; end if;
 end $$;
+select pass('Profile sync and dispute RPC contracts enforce grants and RLS as expected');
+select * from finish();
 rollback;

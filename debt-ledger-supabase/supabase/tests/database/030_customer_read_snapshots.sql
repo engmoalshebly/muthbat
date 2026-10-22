@@ -1,5 +1,6 @@
 -- Standalone assertions; all generated data is rolled back.
 begin;
+select plan(1);
 insert into auth.users(instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,raw_app_meta_data,raw_user_meta_data,created_at,updated_at)
 select '00000000-0000-0000-0000-000000000000',id::uuid,'authenticated','authenticated',email,'unused',now(),'{}','{}',now(),now()
 from (values ('c4111111-1111-4111-8111-111111111111','snapshot-merchant@example.test'),('c4222222-2222-4222-8222-222222222222','snapshot-customer@example.test')) t(id,email);
@@ -54,4 +55,6 @@ select set_config('request.jwt.claim.sub','c4222222-2222-4222-8222-222222222222'
 do $$ begin
  begin perform * from public.read_customer_read_snapshot(current_setting('test.snapshot')::uuid); raise exception 'Archived account remained readable'; exception when insufficient_privilege then null; end;
 end $$;
+select pass('Customer read snapshots enforce size limits, pagination completeness, and access/archival revocation');
+select * from finish();
 rollback;

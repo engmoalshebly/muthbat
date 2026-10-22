@@ -1,5 +1,6 @@
 -- Transactional event generation, token lifecycle, RLS, retries and automation.
 begin;
+select plan(1);
 do $$
 declare
  u1 uuid := gen_random_uuid(); u2 uuid := gen_random_uuid(); b uuid;
@@ -70,4 +71,6 @@ do $$ begin
  if exists(select 1 from public.notifications where user_id<>auth.uid()) then raise exception 'Notification ownership broken'; end if;
 end $$;
 reset role;
+select pass('Android notification events, token lifecycle, RLS and retries behave as expected');
+select * from finish();
 rollback;

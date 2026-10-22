@@ -1,6 +1,7 @@
 -- Financial entries count immediately, without customer acknowledgments.
 -- Run against the migrated database; generated fixtures always roll back.
 begin;
+select plan(1);
 insert into auth.users(instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,raw_app_meta_data,raw_user_meta_data,created_at,updated_at)
 select '00000000-0000-0000-0000-000000000000',id::uuid,'authenticated','authenticated',email,'unused',now(),'{}','{}',now(),now()
 from (values
@@ -79,4 +80,6 @@ do $$ begin
  if has_function_privilege('anon','public.customer_disputes_page(uuid,integer)','execute') then
    raise exception 'Anonymous dispute reader exposed'; end if;
 end $$;
+select pass('Customer dispute follow-up messaging and state transitions behave as expected');
+select * from finish();
 rollback;
