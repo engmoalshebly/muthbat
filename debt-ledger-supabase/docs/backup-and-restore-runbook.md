@@ -28,32 +28,39 @@ Never restore over production for a drill. Use a disposable project.
    (`SUPABASE_PROJECT_NAME=muthbat-restore-drill`).
 2. Restore production backup or a PITR timestamp into it
    (Dashboard > Database > Backups > Restore to a new project).
-3. Run `tools/restore-reconciliation.sql` (see below) against both databases
-   and compare the output.
+3. Run the reconciliation checks below against both databases and compare.
 4. Record in the table at the bottom: date, backup timestamp, elapsed time,
    result.
 5. Delete the drill project.
 
 ### Reconciliation checks
 
-Run read-only on production and on the restored copy; every value must match
-for data older than the restore point.
+Run read-only on production and on the restored copy. For data older than the
+restore point every value must match.
 
 ```sql
-select 'profiles'      as t, count(*) from public.profiles
-union all select 'businesses',     count(*) from public.businesses
-union all select 'ledger_entries', count(*) from public.ledger_entries;
+-- Row counts
+select 'ledger_entries' as t, count(*) from public.ledger_entries
+union all select 'ledger_entry_state',  count(*) from public.ledger_entry_state
+union all select 'ledger_entry_events', count(*) from public.ledger_entry_events
+union all select 'businesses',          count(*) from public.businesses;
 
--- Double-entry invariant: must return zero rows
-select transaction_id
+-- Balance checksum per business and currency (debits minus credits)
+select business_id, currency_code,
+       sum(case direction when 'debit' then amount else -amount end) as balance
 from public.ledger_entries
-group by transaction_id
-having sum(case when direction = 'debit' then amount else -amount end) <> 0;
-```
+group by 1, 2
+order by 1, 2;
 
-If a table or column name above differs from the schema, adapt the query to the
-current migration before the drill; the invariant (debits equal credits per
-transaction) is what matters.
+-- Integrity: each of these must return zero rows
+select e.id from public.ledger_entries e
+  left join public.ledger_entry_state s on s.entry_id = e.id
+ where s.entry_id is null;                        -- entry without state row
+
+select id from public.ledger_entries
+ where reversal_of_entry_id is not null
+   and entry_type <> 'reversal';                  -- reversal link on wrong type
+```
 
 ## 4. Incident: bad data written or table dropped
 
