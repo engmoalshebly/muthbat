@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'app/app.dart';
 import 'app/theme/app_colors.dart';
 import 'core/config/supabase_config.dart';
+import 'core/telemetry/crash_reporting.dart';
 import 'core/services/push_notification_service.dart';
 import 'core/sync/sync_engine.dart';
 import 'core/sync/background_sync.dart';
@@ -14,9 +16,16 @@ import 'core/security/secure_auth_storage.dart';
 import 'features/local_ledger/local_ledger_store.dart';
 import 'firebase_options.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (CrashReporting.enabled) {
+    await SentryFlutter.init(CrashReporting.configure, appRunner: _bootstrap);
+  } else {
+    await _bootstrap();
+  }
+}
 
+Future<void> _bootstrap() async {
   // تهيئة Firebase دون تعطيل الدفتر المحلي في حال عدم توفره
   try {
     if (defaultTargetPlatform == TargetPlatform.android || kIsWeb) {
