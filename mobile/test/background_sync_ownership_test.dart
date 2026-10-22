@@ -20,21 +20,25 @@ void main() {
 
   test('Android retires only its legacy database worker', () async {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    // Workmanager() is a lazily-constructed singleton whose constructor
+    // runs _ensurePlatformImplementation() exactly once per process: the
+    // first time anything calls Workmanager(), it installs a *real*
+    // platform backend (WorkmanagerLinux() on Linux, nothing on Windows)
+    // unless WorkmanagerPlatform.instance already looks like a real
+    // Android/Apple implementation. That single construction happened to
+    // occur above inside configureBackgroundSync() -> Workmanager() ->
+    // cancelByUniqueName(), i.e. *after* the mock below was installed,
+    // which silently replaced the mock with WorkmanagerLinux() on CI's
+    // Linux runners (never reproduced on Windows, where no platform
+    // branch matches). Force that one-time auto-registration to happen
+    // now, before installing the mock, so it can never run again.
+    Workmanager();
     final previous = WorkmanagerPlatform.instance;
     final platform = _Workmanager();
     WorkmanagerPlatform.instance = platform;
     addTearDown(() => WorkmanagerPlatform.instance = previous);
 
     await configureBackgroundSync();
-    // configureBackgroundSync() already awaits cancelByUniqueName, so this
-    // should be synchronous in effect; but on slower/loaded CI runners the
-    // mocked platform channel call has intermittently not yet recorded the
-    // cancellation by the time execution resumes here. Poll briefly with a
-    // real delay (a zero-delay microtask pump was not enough) instead of
-    // asserting immediately.
-    for (var i = 0; i < 50 && platform.cancelled.isEmpty; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-    }
 
     expect(platform.cancelled, [backgroundSyncTask]);
   });
