@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../../../app/theme/app_colors.dart';
 import '../../../../app/theme/app_typography.dart';
 import '../../../../core/finance/money.dart';
+import '../../../../core/finance/currency_info.dart';
 import '../../../../shared/widgets/custom_button.dart';
 import '../../data/models/business_customer_model.dart';
 import '../controllers/merchant_controller.dart';
@@ -25,6 +26,11 @@ class _DiscountEntrySheetState extends ConsumerState<DiscountEntrySheet> {
   final _descController = TextEditingController();
   bool _isSubmitting = false;
   late String _selectedCurrency;
+
+  CurrencyInfo _currencyInfo(String code) => CurrencyCatalog.forCode(
+    code,
+    ref.read(merchantControllerProvider).currencies,
+  );
 
   @override
   void initState() {
@@ -52,10 +58,11 @@ class _DiscountEntrySheetState extends ConsumerState<DiscountEntrySheet> {
   void _handleSubmit() async {
     if (!_formKey.currentState!.validate()) return;
 
+    final money = Money.fromCurrencyText(
+      _amountController.text.trim(),
+      decimalScale: _currencyInfo(_selectedCurrency).decimalScale,
+    );
     setState(() => _isSubmitting = true);
-
-    final money = Money.tryParse(_amountController.text.trim());
-    if (money == null) return;
     final amount = money.toDouble();
     final desc = _descController.text.trim();
 
@@ -103,7 +110,7 @@ class _DiscountEntrySheetState extends ConsumerState<DiscountEntrySheet> {
         bottom: MediaQuery.of(context).viewInsets.bottom + 24,
       ),
       decoration: const BoxDecoration(
-        color: Colors.white,
+        color: AppColors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       child: Form(
@@ -138,12 +145,12 @@ class _DiscountEntrySheetState extends ConsumerState<DiscountEntrySheet> {
                     Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.2),
+                        color: AppColors.white.withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: const Icon(
                         Icons.local_offer_rounded,
-                        color: Colors.white,
+                        color: AppColors.white,
                         size: 24,
                       ),
                     ),
@@ -155,14 +162,14 @@ class _DiscountEntrySheetState extends ConsumerState<DiscountEntrySheet> {
                           Text(
                             'تسجيل خصم',
                             style: AppTypography.titleMedium(
-                              color: Colors.white,
+                              color: AppColors.white,
                             ),
                           ),
                           const SizedBox(height: 2),
                           Text(
                             'خصم لصالح ${widget.customer.localDisplayName}',
                             style: AppTypography.caption(
-                              color: Colors.white.withValues(alpha: 0.85),
+                              color: AppColors.white.withValues(alpha: 0.85),
                             ),
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -218,7 +225,7 @@ class _DiscountEntrySheetState extends ConsumerState<DiscountEntrySheet> {
                               (code) => code.toUpperCase(),
                             ),
                           }
-                          .where((code) => code.length == 3)
+                          .where(CurrencyCatalog.allowedCodes.contains)
                           .map(
                             (code) => ChoiceChip(
                               label: Text(code),
@@ -268,12 +275,26 @@ class _DiscountEntrySheetState extends ConsumerState<DiscountEntrySheet> {
                   if (val == null || val.trim().isEmpty) {
                     return 'يرجى إدخال مبلغ الخصم';
                   }
-                  final parsedMoney = Money.tryParse(val.trim());
-                  final parsed = parsedMoney?.toDouble();
-                  if (parsed != null && !parsed.isFinite) {
+                  final decimalScale = _currencyInfo(
+                    _selectedCurrency,
+                  ).decimalScale;
+                  Money? parsedMoney;
+                  try {
+                    parsedMoney = Money.fromCurrencyText(
+                      val.trim(),
+                      decimalScale: decimalScale,
+                    );
+                  } on FormatException {
+                    if (Money.tryParse(val.trim()) != null) {
+                      return 'تسمح عملة $_selectedCurrency بـ $decimalScale منازل عشرية فقط';
+                    }
+                    return 'يرجى إدخال مبلغ صحيح';
+                  }
+                  final parsed = parsedMoney.toDouble();
+                  if (!parsed.isFinite) {
                     return 'المبلغ غير صالح';
                   }
-                  if (parsed != null && parsed > 9999999999999999.9999) {
+                  if (parsed > 900000000000000) {
                     return 'المبلغ أكبر من الحد المسموح';
                   }
                   final normalized = val.trim().replaceAll(',', '.');
@@ -283,7 +304,7 @@ class _DiscountEntrySheetState extends ConsumerState<DiscountEntrySheet> {
                   if (fraction.length > 4) {
                     return 'يسمح بأربع منازل عشرية كحد أقصى';
                   }
-                  if (parsed == null || parsed <= 0) {
+                  if (parsed <= 0) {
                     return 'المبلغ يجب أن يكون أكبر من الصفر';
                   }
                   return null;
@@ -328,7 +349,7 @@ class _DiscountEntrySheetState extends ConsumerState<DiscountEntrySheet> {
               CustomButton(
                 text: 'تثبيت الخصم',
                 isLoading: _isSubmitting,
-                variant: ButtonVariant.secondary,
+                variant: ButtonVariant.gold,
                 onPressed: _handleSubmit,
                 icon: Icons.local_offer_rounded,
               ),

@@ -1,5 +1,8 @@
 plugins {
     id("com.android.application")
+    // START: FlutterFire Configuration
+    id("com.google.gms.google-services")
+    // END: FlutterFire Configuration
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
@@ -18,6 +21,16 @@ val releaseSigningConfigured = !releaseStoreFile.isNullOrBlank() &&
     !keystoreProperties.getProperty("keyPassword").isNullOrBlank() &&
     !keystoreProperties.getProperty("storePassword").isNullOrBlank()
 
+val releaseTaskRequested = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
+
+if (releaseTaskRequested && !releaseSigningConfigured) {
+    throw GradleException(
+        "Production release requires android/key.properties and a non-debug keystore."
+    )
+}
+
 if (releaseSigningConfigured && !rootProject.file(releaseStoreFile!!).exists()) {
     throw GradleException("Configured Android release keystore does not exist: $releaseStoreFile")
 }
@@ -28,6 +41,8 @@ android {
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -54,12 +69,12 @@ android {
     }
 
     buildTypes {
-        release {
-            if (!releaseSigningConfigured) {
-                throw GradleException(
-                    "Production release requires android/key.properties and a non-debug keystore."
-                )
+        debug {
+            if (providers.gradleProperty("authOperationalTest").orNull == "true") {
+                applicationIdSuffix = ".auth_operational_test"
             }
+        }
+        release {
             signingConfig = signingConfigs.getByName("release")
         }
     }
@@ -67,4 +82,12 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+}
+
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }

@@ -6,15 +6,17 @@ import 'app_colors.dart';
 class AppTypography {
   AppTypography._();
 
+  static const String fontFamily = 'ZaridSlab';
+
   // الخط العربي الأساسي المعتمد للعلامة والواجهات
-  static String get arabicFontFamily => 'Tajawal';
+  static String get arabicFontFamily => fontFamily;
   // الخط الإنجليزي والأرقام
-  static String get latinFontFamily => 'Tajawal';
+  static String get latinFontFamily => fontFamily;
 
   /// العناوين الكبرى والشاشات الرئيسية
   static TextStyle displayLarge({Color color = AppColors.textPrimary}) =>
       TextStyle(
-        fontFamily: 'Tajawal',
+        fontFamily: fontFamily,
         fontSize: 32,
         fontWeight: FontWeight.w800,
         color: color,
@@ -23,7 +25,7 @@ class AppTypography {
 
   static TextStyle displayMedium({Color color = AppColors.textPrimary}) =>
       TextStyle(
-        fontFamily: 'Tajawal',
+        fontFamily: fontFamily,
         fontSize: 26,
         fontWeight: FontWeight.w700,
         color: color,
@@ -43,8 +45,8 @@ class AppTypography {
   /// عناوين البطاقات والأقسام
   static TextStyle titleLarge({Color color = AppColors.textPrimary}) =>
       TextStyle(
-        fontFamily: 'Tajawal',
-        fontSize: 20,
+        fontFamily: fontFamily,
+        fontSize: 21,
         fontWeight: FontWeight.w700,
         color: color,
         height: 1.35,
@@ -52,8 +54,8 @@ class AppTypography {
 
   static TextStyle titleMedium({Color color = AppColors.textPrimary}) =>
       TextStyle(
-        fontFamily: 'Tajawal',
-        fontSize: 16,
+        fontFamily: fontFamily,
+        fontSize: 17,
         fontWeight: FontWeight.w600,
         color: color,
         height: 1.4,
@@ -61,8 +63,8 @@ class AppTypography {
 
   static TextStyle titleSmall({Color color = AppColors.textSecondary}) =>
       TextStyle(
-        fontFamily: 'Tajawal',
-        fontSize: 14,
+        fontFamily: fontFamily,
+        fontSize: 15,
         fontWeight: FontWeight.w600,
         color: color,
         height: 1.4,
@@ -71,8 +73,8 @@ class AppTypography {
   /// نصوص المحتوى وجسم الواجهة (Body)
   static TextStyle bodyLarge({Color color = AppColors.textPrimary}) =>
       TextStyle(
-        fontFamily: 'Tajawal',
-        fontSize: 15,
+        fontFamily: fontFamily,
+        fontSize: 16,
         fontWeight: FontWeight.w500,
         color: color,
         height: 1.5,
@@ -80,17 +82,17 @@ class AppTypography {
 
   static TextStyle bodyMedium({Color color = AppColors.textSecondary}) =>
       TextStyle(
-        fontFamily: 'Tajawal',
-        fontSize: 13,
-        fontWeight: FontWeight.w400,
+        fontFamily: fontFamily,
+        fontSize: 15,
+        fontWeight: FontWeight.w500,
         color: color,
         height: 1.5,
       );
 
   static TextStyle bodySmall({Color color = AppColors.textMuted}) => TextStyle(
-    fontFamily: 'Tajawal',
-    fontSize: 11.5,
-    fontWeight: FontWeight.w400,
+    fontFamily: fontFamily,
+    fontSize: 13,
+    fontWeight: FontWeight.w500,
     color: color,
     height: 1.4,
   );
@@ -104,7 +106,7 @@ class AppTypography {
     double fontSize = 24,
     FontWeight fontWeight = FontWeight.w800,
   }) => TextStyle(
-    fontFamily: 'Tajawal',
+    fontFamily: fontFamily,
     fontSize: fontSize,
     fontWeight: fontWeight,
     color: color,
@@ -117,7 +119,7 @@ class AppTypography {
     double fontSize = 12,
     double letterSpacing = 4.0,
   }) => TextStyle(
-    fontFamily: 'Tajawal',
+    fontFamily: fontFamily,
     fontSize: fontSize,
     fontWeight: FontWeight.w800,
     letterSpacing: letterSpacing,
@@ -127,8 +129,8 @@ class AppTypography {
   /// الشعار التسويقي (Tagline)
   static TextStyle tagline({Color color = AppColors.textSecondary}) =>
       TextStyle(
-        fontFamily: 'Tajawal',
-        fontSize: 13,
+        fontFamily: fontFamily,
+        fontSize: 14,
         fontWeight: FontWeight.w600,
         letterSpacing: 0.3,
         color: color,

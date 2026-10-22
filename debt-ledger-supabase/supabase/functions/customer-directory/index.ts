@@ -1,10 +1,11 @@
 import { optionsResponse } from "../_shared/cors.ts";
 import { requireUser } from "../_shared/auth.ts";
-import { encryptPhone, normalizeE164, phoneHash } from "../_shared/crypto.ts";
+import { encryptPhone, phoneHash } from "../_shared/crypto.ts";
+import { normalizeCustomerPhone } from "../_shared/customer-phone.ts";
 import { errorResponse, json, readJson, requirePost } from "../_shared/http.ts";
 import { serviceClient } from "../_shared/supabase.ts";
 
-type DirectoryRequest = { businessId: string; phone?: string; localDisplayName: string; creditLimit?: number; defaultDueDays?: number; requestLink?: boolean };
+type DirectoryRequest = { requestId?: string; localCustomerId?: string; businessId: string; phone?: string; localDisplayName: string; localNote?: string; creditLimit?: number; defaultDueDays?: number; requestLink?: boolean };
 const allowedRoles = ["owner", "admin", "accountant", "cashier"];
 
 function phoneKeyVersion(): number {
@@ -22,13 +23,12 @@ Deno.serve(async (request) => {
     const { user, client } = await requireUser(request);
     const input = await readJson<DirectoryRequest>(request);
     if (!input.businessId || !input.localDisplayName?.trim()) return errorResponse(request, 422, "invalid_request", "businessId and localDisplayName are required.");
+    if (input.localNote != null && (typeof input.localNote !== "string" || input.localNote.length > 500)) return errorResponse(request, 422, "invalid_note", "Customer note must not exceed 500 characters.");
 
     let phone: string | null = null;
     if (input.phone && input.phone.trim().length > 0) {
       try {
-        const raw = input.phone.trim();
-        phone = raw.startsWith("+") ? raw : (raw.startsWith("967") ? `+${raw}` : `+967${raw}`);
-        phone = normalizeE164(phone);
+        phone = normalizeCustomerPhone(input.phone);
       } catch {
         return errorResponse(request, 422, "invalid_phone", "phone must be a valid number.");
       }
@@ -53,74 +53,36 @@ Deno.serve(async (request) => {
     if (membershipError) throw membershipError;
     if (!membership || !allowedRoles.includes(membership.role)) return errorResponse(request, 403, "forbidden", "You cannot add customers to this business.");
 
-    // No phone means there is no directory/PII operation to perform. Use the
-    // authenticated atomic command directly; this also keeps queued offline
-    // customer commands independent from service-role table grants.
-    if (!phone) {
-      const { data: businessCustomerId, error: directError } = await client.rpc("create_business_customer_direct", {
-        p_business_id: input.businessId,
-        p_local_display_name: input.localDisplayName.trim(),
-        p_credit_limit: input.creditLimit ?? null,
-        p_default_due_days: input.defaultDueDays ?? null,
-      });
-      if (directError || !businessCustomerId) throw directError ?? new Error("business_customer_create_failed");
-      return json(request, {
-        businessCustomerId,
-        linkRequestId: null,
-        isRegistered: false,
-        phoneLast4: null,
-        globalCode: null,
-      }, 201);
+    const requestId = input.requestId ?? (input.localCustomerId?.startsWith("cust-") ? input.localCustomerId.slice(5) : "");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)) {
+      return errorResponse(request, 422, "invalid_request_id", "A stable UUID requestId is required.");
     }
-
-    let customer: { customer_id: string; user_id: string | null; global_code: string; phone_last4: string | null } | undefined;
-
+    const contact: Record<string, unknown> = {};
     if (phone) {
-      const hash = await phoneHash(phone);
-      const { data: matches, error: lookupError } = await admin.rpc("service_resolve_customer_phone", {
-        p_phone_hash: hash, p_phone_ciphertext: await encryptPhone(phone),
-        p_phone_last4: phone.slice(-4), p_key_version: phoneKeyVersion(),
-      });
-      if (lookupError) throw lookupError;
-      customer = matches?.[0];
-      if (!customer) throw new Error("customer_resolve_failed");
-    } else {
-      const { data: created, error: createError } = await admin.from("customers").insert({}).select("id,user_id,global_code").single();
-      if (createError || !created) throw createError ?? new Error("customer_create_failed");
-      customer = { customer_id: created.id, user_id: null, global_code: created.global_code, phone_last4: null };
+      const encrypted = await encryptPhone(phone);
+      contact.phone_hash = await phoneHash(phone);
+      contact.phone_ciphertext = encrypted.startsWith("\\\\x") ? encrypted.slice(1) : encrypted;
+      contact.phone_last4 = phone.slice(-4);
+      contact.key_version = phoneKeyVersion();
     }
-
-    // A phone may identify one global customer, but the same business must
-    // never receive a second active relationship for that customer.
-    const { data: existingBusinessCustomer, error: existingError } = await client
-      .from("business_customers")
-      .select("id,is_archived")
-      .eq("business_id", input.businessId)
-      .eq("customer_id", customer.customer_id)
-      .maybeSingle();
-    if (existingError) throw existingError;
-    if (existingBusinessCustomer && existingBusinessCustomer.is_archived !== true) {
-      return errorResponse(request, 409, "customer_exists", "This phone number is already registered for this business.");
-    }
-
-    const { data: businessCustomerId, error: addError } = await client.rpc("add_business_customer", {
-      p_business_id: input.businessId, p_customer_id: customer.customer_id, p_local_display_name: input.localDisplayName.trim(),
-      p_credit_limit: input.creditLimit ?? null, p_default_due_days: input.defaultDueDays ?? null,
+    const { error: prepareError } = await admin.rpc("service_prepare_customer_directory", {
+      p_user_id: user.id, p_request_id: requestId,
+      p_payload: { businessId: input.businessId, localDisplayName: input.localDisplayName.trim(),
+        localNote: input.localNote?.trim() ?? null, creditLimit: input.creditLimit ?? null,
+        defaultDueDays: input.defaultDueDays ?? null, requestLink: input.requestLink ?? false },
+      p_contact: contact,
     });
-    if (addError || !businessCustomerId) throw addError ?? new Error("business_customer_create_failed");
-
-    let linkRequestId: string | null = null;
-    if (input.requestLink && customer.user_id) {
-      const { data, error } = await client.rpc("request_customer_link", { p_business_customer_id: businessCustomerId });
-      if (error) throw error;
-      linkRequestId = data;
-    }
-    return json(request, { businessCustomerId, linkRequestId, isRegistered: Boolean(customer.user_id), phoneLast4: customer.phone_last4, globalCode: customer.global_code }, 201);
+    if (prepareError) throw prepareError;
+    const { data, error } = await client.rpc("complete_customer_directory", { p_request_id: requestId });
+    if (error) throw error;
+    return json(request, data, 201);
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown_error";
     if (message === "unauthorized") return errorResponse(request, 401, "unauthorized", "Authentication is required.");
     if (message === "invalid_json") return errorResponse(request, 400, "invalid_json", "Request body must be valid JSON.");
-    console.error("customer_directory_error", message);
+    const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+    if (["22023", "22P02", "23505"].includes(code)) return errorResponse(request, 422, "invalid_request", "راجع بيانات العميل أو تعارض رقم الهاتف.");
+    if (code === "42501") return errorResponse(request, 403, "forbidden", "لا تملك صلاحية إضافة العميل.");
     return errorResponse(request, 500, "internal_error", "Unable to resolve this customer.");
   }
 });

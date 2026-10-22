@@ -1,14 +1,15 @@
+import '../../../app/theme/app_document_colors.dart';
 import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'models/customer_summary_model.dart';
 
-/// Export only the displayed snapshot; never infer a complete/current balance
-/// from a partial page or combine currencies into one financial total.
+/// Exports a single account/currency. Complete exports require a server snapshot.
 Future<Uint8List> customerLedgerPdf({
   required CustomerBusinessSummary summary,
   required List<Map<String, dynamic>> entries,
   required String updatedAt,
+  bool isComplete = false,
 }) async {
   if (entries.isEmpty) throw ArgumentError('لا توجد حركات محمّلة للتصدير');
   if (entries.any(
@@ -19,7 +20,7 @@ Future<Uint8List> customerLedgerPdf({
     throw ArgumentError('لا يمكن خلط حسابات البقالات أو العملات في هذا الكشف');
   }
   final font = pw.Font.ttf(
-    await rootBundle.load('assets/fonts/Tajawal-Regular.ttf'),
+    await rootBundle.load('assets/fonts/29LTZaridSlab-Medium.ttf'),
   );
   final document = pw.Document();
   const labels = {
@@ -32,7 +33,7 @@ Future<Uint8List> customerLedgerPdf({
   document.addPage(
     pw.MultiPage(
       pageFormat: PdfPageFormat.a4,
-      maxPages: 200,
+      maxPages: entries.length + 10,
       theme: pw.ThemeData.withFont(base: font, bold: font),
       textDirection: pw.TextDirection.rtl,
       header: (_) => pw.Column(
@@ -47,13 +48,13 @@ Future<Uint8List> customerLedgerPdf({
         ],
       ),
       footer: (context) => pw.Text(
-        'نسخة محلية للحركات المحملة فقط - ليست إقرارًا بالدين | ${context.pageNumber} / ${context.pagesCount}',
+        '${isComplete ? 'كشف كامل حتى وقت اللقطة' : 'الحركات المحملة فقط'} - ليست إقرارًا بالدين | ${context.pageNumber} / ${context.pagesCount}',
         style: const pw.TextStyle(fontSize: 9),
       ),
       build: (_) => [
         pw.Text('آخر تحديث للبيانات: $updatedAt'),
         pw.Text(
-          'عدد الحركات المصدرة: ${entries.length}. قد توجد حركات أخرى لم تُحمّل أو تغيّرت بعد التحديث.',
+          'عدد الحركات المصدرة: ${entries.length}. ${isComplete ? 'يشمل جميع حركات الحساب بهذه العملة حتى وقت اللقطة.' : 'قد توجد حركات أخرى لم تُحمّل أو تغيّرت بعد التحديث.'}',
         ),
         pw.SizedBox(height: 14),
         pw.TableHelper.fromTextArray(
@@ -69,9 +70,7 @@ Future<Uint8List> customerLedgerPdf({
                 ? 'معكوسة'
                 : e['dispute_status'] == 'open'
                 ? 'اعتراض مفتوح'
-                : e['confirmation_status'] == 'confirmed'
-                ? 'مؤكدة'
-                : 'غير مؤكدة';
+                : 'مسجلة';
             return [
               status,
               entry.direction == 'credit' ? '${entry.amount}' : '-',
@@ -81,9 +80,11 @@ Future<Uint8List> customerLedgerPdf({
             ];
           }).toList(),
           cellStyle: const pw.TextStyle(fontSize: 9),
-          headerStyle: const pw.TextStyle(fontSize: 10),
+          headerStyle: pw.TextStyle(fontSize: 10, color: PdfColors.white),
           cellAlignment: pw.Alignment.centerRight,
-          headerDecoration: const pw.BoxDecoration(color: PdfColors.grey200),
+          headerDecoration: pw.BoxDecoration(
+            color: AppDocumentColors.tableHeader,
+          ),
           columnWidths: {
             0: const pw.FlexColumnWidth(1.2),
             1: const pw.FlexColumnWidth(1),

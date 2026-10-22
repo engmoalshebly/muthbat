@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:uuid/uuid.dart';
+import 'package:flutter/foundation.dart';
 import '../../../core/database/app_database.dart';
 
 class CustomerOutbox {
+  static final changes = ValueNotifier<int>(0);
   Future<Database> _database(String owner) async {
     if (AppDatabase.instance.accountId != owner) {
       throw StateError('الحساب المحلي مقفل');
@@ -20,7 +22,7 @@ class CustomerOutbox {
 
   Future<String> enqueue(String owner, Map<String, dynamic> payload) async {
     final db = await _database(owner);
-    return db.transaction((txn) async {
+    final id = await db.transaction((txn) async {
       final encoded = jsonEncode(payload);
       final target = payload['target_id'] as String;
       final existing = await txn.query(
@@ -46,6 +48,8 @@ class CustomerOutbox {
       });
       return id;
     });
+    changes.value++;
+    return id;
   }
 
   Future<List<Map<String, dynamic>>> list(String owner) async =>
@@ -57,6 +61,7 @@ class CustomerOutbox {
     await (await _database(
       owner,
     )).delete('customer_outbox', where: 'id=?', whereArgs: [id]);
+    changes.value++;
   }
 
   Future<void> fail(String owner, String id, String message) async {
@@ -66,6 +71,7 @@ class CustomerOutbox {
       where: 'id=?',
       whereArgs: [id],
     );
+    changes.value++;
   }
 
   Future<void> retry(String owner, String id) async {
@@ -75,5 +81,6 @@ class CustomerOutbox {
       where: 'id=?',
       whereArgs: [id],
     );
+    changes.value++;
   }
 }

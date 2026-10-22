@@ -1,15 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
-import '../../../core/constants/asset_paths.dart';
 
-enum LogoVariant {
-  primary,
-  iconOnly,
-  white,
-  splash,
-}
+import '../../core/constants/asset_paths.dart';
 
-/// عنصر عرض شعار «مُثبَت» المعتمد والرموز المرئية
+enum LogoVariant { primary, iconOnly, white, splash }
+
+/// Single rendering point for the approved Muthbat brand assets.
 class BrandLogo extends StatelessWidget {
   final LogoVariant variant;
   final double? width;
@@ -54,53 +49,33 @@ class BrandLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    switch (variant) {
-      case LogoVariant.primary:
-        return Image.asset(
-          AssetPaths.logoPng,
-          width: width ?? 200,
-          height: height,
-          fit: fit,
-          errorBuilder: (context, error, stackTrace) => SvgPicture.asset(
-            AssetPaths.logoPrimary,
-            width: width ?? 200,
-            height: height,
-            fit: fit,
-          ),
-        );
-      case LogoVariant.iconOnly:
-        return Image.asset(
-          AssetPaths.iconPng,
-          width: width ?? 72,
-          height: height ?? 72,
-          fit: fit,
-          errorBuilder: (context, error, stackTrace) => SvgPicture.asset(
-            AssetPaths.logoIcon,
-            width: width ?? 72,
-            height: height ?? 72,
-            fit: fit,
-          ),
-        );
-      case LogoVariant.splash:
-        return Image.asset(
-          AssetPaths.splashPng,
-          width: width ?? 160,
-          height: height ?? 160,
-          fit: fit,
-          errorBuilder: (context, error, stackTrace) => SvgPicture.asset(
-            AssetPaths.logoPrimary,
-            width: width ?? 160,
-            height: height ?? 160,
-            fit: fit,
-          ),
-        );
-      case LogoVariant.white:
-        return SvgPicture.asset(
-          AssetPaths.logoWhite,
-          width: width ?? 180,
-          height: height,
-          fit: fit,
-        );
+    if (variant == LogoVariant.white) {
+      return SizedBox(
+        width: width ?? 180,
+        height: height ?? 40,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          textDirection: TextDirection.rtl,
+          children: [
+            Image.asset(AssetPaths.mark, fit: BoxFit.contain),
+            const SizedBox(width: 4),
+            const Text('مُثبَت', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+          ],
+        ),
+      );
     }
+    final path = switch (variant) {
+      LogoVariant.primary => AssetPaths.horizontalArabic,
+      LogoVariant.iconOnly => AssetPaths.mark,
+      LogoVariant.white => AssetPaths.mark,
+      LogoVariant.splash => AssetPaths.mark,
+    };
+    return Image.asset(
+      path,
+      width: width,
+      height: height ?? (variant == LogoVariant.primary ? (width ?? 200) * .34 : null),
+      fit: fit,
+      semanticLabel: 'شعار مُثبَت',
+    );
   }
 }

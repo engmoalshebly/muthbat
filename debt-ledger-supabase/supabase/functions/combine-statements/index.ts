@@ -17,8 +17,8 @@ Deno.serve(async (request) => {
     const { client } = await requireUser(request);
     const body = await readJson<CombineRequest>(request);
     const statementIds = [...new Set(body.statementIds ?? [])];
-    if (statementIds.length < 2 || statementIds.length > 10) {
-      return errorResponse(request, 400, "invalid_statement_ids", "Provide between 2 and 10 statements.");
+    if (statementIds.length < 2 || statementIds.length > 32) {
+      return errorResponse(request, 400, "invalid_statement_ids", "Provide between 2 and 32 statements.");
     }
 
     const { data: allowed, error: accessError } = await client
@@ -58,20 +58,14 @@ Deno.serve(async (request) => {
 
     const bytes = await combined.save();
     const firstStatementId = statementIds[0];
-    const objectPath = `statements/${firstStatementId}/${crypto.randomUUID()}-all-currencies.pdf`;
+    const bundleKey = await sha256Hex(new TextEncoder().encode(statementIds.join(",")).buffer as ArrayBuffer);
+    const objectPath = `statements/combined/${bundleKey}.pdf`;
     const hash = await sha256Hex(bytes.buffer as ArrayBuffer);
     const { error: uploadError } = await admin.storage.from("statements").upload(objectPath, bytes, {
       contentType: "application/pdf",
       upsert: true,
     });
     if (uploadError) throw uploadError;
-
-    const { error: attachError } = await admin.rpc("service_attach_statement_document", {
-      p_statement_id: firstStatementId,
-      p_object_path: objectPath,
-      p_sha256_hex: hash,
-    });
-    if (attachError) throw attachError;
 
     const { data: signed, error: signError } = await admin.storage.from("statements").createSignedUrl(objectPath, 3600);
     if (signError || !signed) throw signError ?? new Error("signed_url_failed");

@@ -1,9 +1,10 @@
 import 'env.dart';
 
-/// إعدادات الاتصال بمنظومة Supabase — حقن وقت البناء فقط (--dart-define).
+/// إعدادات الاتصال بمنظومة Supabase، مع إمكانية تجاوزها وقت البناء.
+/// قيم المشروع الافتراضية في dev عامة؛ لا تتضمن مفاتيح إدارية.
 ///
 /// ┌─────────────────────────────────────────────────────────────────┐
-/// │ الأسرار والقيم المطلوبة لكل بيئة (لا تُكتب هنا إطلاقاً):          │
+/// │ الأسرار الإدارية لا توضع في العميل؛ قيم العميل العامة يمكن نشرها. │
 /// │                                                                   │
 /// │ العميل (موبايل) — عبر --dart-define من CI secrets:                │
 /// │   SUPABASE_URL        عنوان مشروع Supabase للبيئة                 │
@@ -31,22 +32,22 @@ class SupabaseConfig {
     'SUPABASE_ANON_KEY',
   );
 
-  /// القيم المخصصة للبيئة المحلية (Local Stack)
-  // Android Emulator reaches the host machine through 10.0.2.2.
-  // 127.0.0.1 would point back to the emulator itself.
-  static const String _defaultLocalDevUrl = 'http://10.0.2.2:55321';
-  static const String _defaultLocalDevAnonKey =
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+  /// المشروع السحابي الافتراضي للتطوير. المفتاح publishable مخصص للعميل.
+  /// التشغيل المحلي أو مشروع آخر يمرر العنوان والمفتاح عبر dart-define.
+  static const String _defaultDevUrl =
+      'https://sgnbtrcbllnffcyzsjei.supabase.co';
+  static const String _defaultDevPublishableKey =
+      'sb_publishable_FCoMw-maX6ZjV123PIly5w_ZsfEwsUW';
 
-  /// العنوان الفعال للاتصال (يستخدم العنوان المحلي تلقائياً في بيئة dev)
+  /// العنوان الفعال؛ staging/prod يتطلبان إعدادًا صريحًا وقت البناء.
   static String get effectiveUrl => supabaseUrl.isNotEmpty
       ? supabaseUrl
-      : (EnvConfig.isDev ? _defaultLocalDevUrl : '');
+      : (EnvConfig.isDev ? _defaultDevUrl : '');
 
-  /// المفتاح الفعال للاتصال (يستخدم المفتاح المحلي تلقائياً في بيئة dev)
+  /// الاسم القديم للمتغير يدعم أيضًا مفتاح Supabase publishable الجديد.
   static String get effectiveAnonKey => supabaseAnonKey.isNotEmpty
       ? supabaseAnonKey
-      : (EnvConfig.isDev ? _defaultLocalDevAnonKey : '');
+      : (EnvConfig.isDev ? _defaultDevPublishableKey : '');
 
   /// تهيئة والتحقق من الإعداد قبل أي اتصال.
   static Future<void> init() async {

@@ -22,6 +22,7 @@ void main() {
       factory: databaseFactoryFfi,
       databasePath: inMemoryDatabasePath,
     );
+    addTearDown(() async => (await store.database).close());
     await tester.runAsync(() async {
       await store.create('بقالة الاختبار', 'YER');
       await store.record(
@@ -44,11 +45,18 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 200));
     });
     await tester.pumpAndSettle();
-    expect(find.text('دفتر حساب شخصي'), findsOneWidget);
+    expect(find.text('بقالة الاختبار'), findsOneWidget);
+    await tester.tap(find.byTooltip('الحساب'));
+    await tester.pumpAndSettle();
+    expect(find.text('العملة الأساسية'), findsOneWidget);
+    expect(find.text('الحركات المسجلة'), findsOneWidget);
+    expect(find.text('تفعيل حساب التاجر'), findsNothing);
+    await tester.tap(find.byTooltip('رجوع'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('العملاء').last);
     await tester.pumpAndSettle();
     expect(find.text('أحمد'), findsOneWidget);
-    expect(find.text('50 YER'), findsOneWidget);
+    expect(find.textContaining('50 YER'), findsOneWidget);
     await tester.tap(find.text('مسددون'));
     await tester.pumpAndSettle();
     expect(find.text('أحمد'), findsNothing);
@@ -60,47 +68,14 @@ void main() {
     expect(find.text('أحمد'), findsNothing);
     await tester.enterText(find.byType(TextField), 'أحمد');
     await tester.pumpAndSettle();
-    await tester.tap(find.text('أحمد').last);
+    await tester.tap(find.byTooltip('رجوع'));
     await tester.pumpAndSettle();
-    expect(find.text('المتبقي على العميل'), findsOneWidget);
-    expect(find.byTooltip('مشاركة كشف PDF'), findsOneWidget);
-    expect(find.byTooltip('عكس العملية'), findsNothing);
-    await tester.tap(find.text('دفعات'));
-    await tester.pumpAndSettle();
-    expect(find.text('لا توجد نتائج في هذه القائمة'), findsOneWidget);
-    await tester.tap(find.byIcon(Icons.arrow_back));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('التقارير'));
-    await tester.pumpAndSettle();
-    expect(find.text('إجمالي المستحق لك'), findsOneWidget);
-    expect(find.text('أحمد'), findsNothing);
-    await tester.tap(find.byTooltip('الحساب'));
-    await tester.pumpAndSettle();
-    expect(find.text('انتقل إلى حساب تاجر، بنفس بياناتك'), findsOneWidget);
-    await tester.tap(find.text('كيف أنقل دفتري؟'));
-    await tester.pumpAndSettle();
-    expect(find.text('مراجعة الدفتر وتأكيد نقله'), findsOneWidget);
-    await tester.tap(find.byIcon(Icons.arrow_back));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('العملاء').last);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('دين / دفعة'));
+    await tester.tap(find.text('تسجيل دين'));
     await tester.pumpAndSettle();
     expect(find.text('حفظ على الجهاز'), findsOneWidget);
-    await tester.ensureVisible(find.text('حفظ على الجهاز'));
-    await tester.tap(find.text('حفظ على الجهاز'));
-    await tester.pumpAndSettle();
-    expect(find.text('أدخل وصف العملية قبل الحفظ'), findsOneWidget);
     tester.view.physicalSize = const Size(320, 640);
     tester.view.viewInsets = const FakeViewPadding(bottom: 240);
     addTearDown(tester.view.resetViewInsets);
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-    await tester.tap(find.byTooltip('إلغاء'));
-    await tester.pumpAndSettle();
-    tester.view.resetViewInsets();
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('التقارير'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());

@@ -44,5 +44,7 @@ Production-ready Edge Functions implemented under Deno runtime with full TypeScr
 
 8. **`process-notification-outbox`**
    - Background push worker claiming batches with `service_claim_notification_batch`.
-   - Multi-provider dispatch: **Firebase Cloud Messaging (FCM)**, **Expo Push**, or in-app mock.
+   - Android production delivery through **FCM HTTP v1**, renewable service-account OAuth, per-device retries and invalid-token retirement.
+   - Both scheduled workers require `NOTIFICATION_WORKER_SECRET` in `x-worker-secret`; user JWTs do not authorize them.
+   - Respects account notification preferences; skipped in-app delivery is not reported as push success.
    - Records all attempts in `private.notification_delivery_attempts`.

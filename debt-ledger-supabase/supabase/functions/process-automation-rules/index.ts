@@ -139,7 +139,7 @@ Deno.serve(async (request) => {
   if (methodError) return methodError;
 
   try {
-    requireWorkerSecret(request);
+    requireWorkerSecret(request, "NOTIFICATION_WORKER_SECRET");
     const admin = serviceClient();
 
     // 1. Fetch active automation rules with business metadata
@@ -157,6 +157,10 @@ Deno.serve(async (request) => {
 
     for (const rule of (rules ?? []) as AutomationRule[]) {
       rulesEvaluated++;
+      if (rule.channel === "manual_share") {
+        runsSkipped++;
+        continue;
+      }
 
       // Fetch business and settings
       const { data: business } = await admin
@@ -198,10 +202,12 @@ Deno.serve(async (request) => {
             business_customer_id,
             customer_id,
             amount,
+            currency_code,
             due_date,
             business_customers (
               id,
               local_display_name,
+              link_status,
               customers (
                 id,
                 user_id
@@ -210,7 +216,10 @@ Deno.serve(async (request) => {
           `)
           .eq("business_id", rule.business_id)
           .eq("entry_type", "debt")
-          .eq("due_date", rule.trigger_type === "on_due" ? todayDate : targetDateStr);
+          .eq(
+            "due_date",
+            rule.trigger_type === "on_due" ? todayDate : targetDateStr,
+          );
 
         if (debtError) {
           errors.push(`Rule ${rule.id} query error: ${debtError.message}`);
@@ -237,6 +246,7 @@ Deno.serve(async (request) => {
             .from("business_customer_balances")
             .select("current_balance")
             .eq("business_customer_id", entry.business_customer_id)
+            .eq("currency_code", entry.currency_code)
             .maybeSingle();
 
           if (!balanceRow || Number(balanceRow.current_balance) <= 0) {
@@ -259,77 +269,57 @@ Deno.serve(async (request) => {
             .single();
 
           if (runInsertError) {
-            errors.push(`Run insert failed for ${runKey}: ${runInsertError.message}`);
+            errors.push(
+              `Run insert failed for ${runKey}: ${runInsertError.message}`,
+            );
             continue;
           }
 
           try {
             const busCust = entry.business_customers as unknown as {
               local_display_name: string;
+              link_status: string;
               customers: { id: string; user_id: string | null } | null;
             } | null;
             const customerName = busCust?.local_display_name ?? "العميل";
-            const targetUserId = busCust?.customers?.user_id;
+            const targetUserId = busCust?.link_status === "linked"
+              ? busCust?.customers?.user_id
+              : null;
 
             const messageBody = renderTemplate(rule.message_template, {
               customer_name: customerName,
               amount: entry.amount,
-              currency: business.currency_code,
+              currency: entry.currency_code,
               due_date: entry.due_date ?? todayDate,
               business_name: business.name,
             });
 
-            // 1. Create reminder record using the actual reminders schema
-            //    (sent_by_user_id + message_snapshot are NOT NULL; there is no
-            //    ledger_entry_id/title/body). Recorded on behalf of the owner.
-            const { error: reminderError } = await admin.from("reminders").insert({
-              business_id: rule.business_id,
-              business_customer_id: entry.business_customer_id,
-              sent_by_user_id: business.owner_user_id,
-              channel: rule.channel,
-              message_snapshot: messageBody.slice(0, 1000),
-              status: targetUserId ? "sent" : "queued",
-              sent_at: targetUserId ? new Date().toISOString() : null,
-            });
-            if (reminderError) throw reminderError;
-
-            // 2. If customer is registered in app, enqueue the notification via
-            //    the transactional outbox so push delivery actually happens.
-            if (targetUserId) {
-              const { error: enqueueError } = await admin.rpc(
-                "service_enqueue_notification",
-                {
-                  p_user_id: targetUserId,
-                  p_type: "payment_due",
-                  p_title: `تذكير استحقاق من ${business.name}`,
-                  p_body: messageBody,
-                  p_entity_type: "ledger_entry",
-                  p_entity_id: entry.id,
-                  p_data: {
-                    business_id: rule.business_id,
-                    business_customer_id: entry.business_customer_id,
-                    ledger_entry_id: entry.id,
-                    amount: entry.amount,
-                    currency: business.currency_code,
-                  },
+            const { error: dispatchError } = await admin.rpc(
+              "service_dispatch_automation",
+              {
+                p_run_id: runRecord.id,
+                p_user_id: targetUserId ?? null,
+                p_type: "payment_due",
+                p_title: `تذكير استحقاق من ${business.name}`,
+                p_body: messageBody,
+                p_entity_type: "ledger_entry",
+                p_entity_id: entry.id,
+                p_data: {
+                  business_id: rule.business_id,
+                  business_customer_id: entry.business_customer_id,
+                  currency: entry.currency_code,
                 },
-              );
-              if (enqueueError) throw enqueueError;
-            }
-
-            // Mark run as succeeded
-            await admin
-              .from("automation_runs")
-              .update({
-                status: "succeeded",
-                completed_at: new Date().toISOString(),
-                result: { messageBody, sentToUser: Boolean(targetUserId) },
-              })
-              .eq("id", runRecord.id);
+                p_push: rule.channel === "push" &&
+                  (settings?.allow_push ?? true),
+              },
+            );
+            if (dispatchError) throw dispatchError;
 
             runsExecuted++;
           } catch (execError) {
-            const errorMsg = execError instanceof Error ? execError.message : "execution_failed";
+            const errorMsg = execError instanceof Error
+              ? execError.message
+              : "execution_failed";
             await admin
               .from("automation_runs")
               .update({
@@ -367,7 +357,9 @@ Deno.serve(async (request) => {
           .lte("created_at", slaThreshold);
 
         if (disputeError) {
-          errors.push(`Rule ${rule.id} dispute query error: ${disputeError.message}`);
+          errors.push(
+            `Rule ${rule.id} dispute query error: ${disputeError.message}`,
+          );
           continue;
         }
 
@@ -408,35 +400,31 @@ Deno.serve(async (request) => {
               sla_days: rule.offset_days,
             });
 
-            if (businessOwner) {
-              // Enqueue via the transactional outbox so push delivery happens.
-              const { error: enqueueError } = await admin.rpc(
-                "service_enqueue_notification",
-                {
-                  p_user_id: businessOwner,
-                  p_type: "system",
-                  p_title: `تنبيه تأخر الرد على اعتراض - ${business.name}`,
-                  p_body: messageBody,
-                  p_entity_type: "dispute",
-                  p_entity_id: dispute.id,
-                  p_data: { dispute_id: dispute.id, business_id: dispute.business_id },
+            const { error: dispatchError } = await admin.rpc(
+              "service_dispatch_automation",
+              {
+                p_run_id: runRecord.id,
+                p_user_id: businessOwner,
+                p_type: "system",
+                p_title: `تنبيه تأخر الرد على اعتراض - ${business.name}`,
+                p_body: messageBody,
+                p_entity_type: "dispute",
+                p_entity_id: dispute.id,
+                p_data: {
+                  business_id: rule.business_id,
+                  dispute_id: dispute.id,
                 },
-              );
-              if (enqueueError) throw enqueueError;
-            }
-
-            await admin
-              .from("automation_runs")
-              .update({
-                status: "succeeded",
-                completed_at: new Date().toISOString(),
-                result: { disputeId: dispute.id, notifiedUser: businessOwner },
-              })
-              .eq("id", runRecord.id);
+                p_push: rule.channel === "push" &&
+                  (settings?.allow_push ?? true),
+              },
+            );
+            if (dispatchError) throw dispatchError;
 
             runsExecuted++;
           } catch (execError) {
-            const errorMsg = execError instanceof Error ? execError.message : "execution_failed";
+            const errorMsg = execError instanceof Error
+              ? execError.message
+              : "execution_failed";
             await admin
               .from("automation_runs")
               .update({

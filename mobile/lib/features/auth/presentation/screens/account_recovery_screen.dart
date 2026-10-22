@@ -70,7 +70,7 @@ class _AccountRecoveryScreenState extends ConsumerState<AccountRecoveryScreen> {
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
+        backgroundColor: AppColors.transparent,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(
@@ -100,10 +100,10 @@ class _AccountRecoveryScreenState extends ConsumerState<AccountRecoveryScreen> {
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE7F8EE),
+                  color: AppColors.messagingSurface,
                   borderRadius: BorderRadius.circular(18),
                   border: Border.all(
-                    color: const Color(0xFF25D366).withValues(alpha: 0.4),
+                    color: AppColors.messagingGreen.withValues(alpha: 0.4),
                     width: 1.2,
                   ),
                 ),
@@ -113,12 +113,12 @@ class _AccountRecoveryScreenState extends ConsumerState<AccountRecoveryScreen> {
                       width: 40,
                       height: 40,
                       decoration: const BoxDecoration(
-                        color: Color(0xFF25D366),
+                        color: AppColors.messagingGreen,
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(
                         Icons.chat_bubble_rounded,
-                        color: Colors.white,
+                        color: AppColors.white,
                         size: 22,
                       ),
                     ),
@@ -132,7 +132,7 @@ class _AccountRecoveryScreenState extends ConsumerState<AccountRecoveryScreen> {
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w800,
-                              color: Color(0xFF0F5132),
+                              color: AppColors.messagingInk,
                             ),
                           ),
                           const SizedBox(height: 2),
@@ -140,9 +140,9 @@ class _AccountRecoveryScreenState extends ConsumerState<AccountRecoveryScreen> {
                             'سنرسل رمز تحقق سداسي (OTP) إلى واتساب على رقمك المعتمد.',
                             style: TextStyle(
                               fontSize: 11,
-                              color: const Color(
-                                0xFF0F5132,
-                              ).withValues(alpha: 0.85),
+                              color: AppColors.messagingInk.withValues(
+                                alpha: 0.85,
+                              ),
                             ),
                           ),
                         ],
@@ -158,7 +158,7 @@ class _AccountRecoveryScreenState extends ConsumerState<AccountRecoveryScreen> {
               Container(
                     padding: const EdgeInsets.all(22),
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: AppColors.white,
                       borderRadius: BorderRadius.circular(24),
                       border: Border.all(
                         color: AppColors.borderLight,

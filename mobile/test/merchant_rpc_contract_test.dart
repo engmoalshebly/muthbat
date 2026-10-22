@@ -49,9 +49,6 @@ void main() {
       expect(reversal, isNot(contains('p_original_entry_id')));
     });
 
-    test('employee invites use the phone-directory edge function', () {
-      expect(RpcContract.edgeMemberInvite, 'member-invite');
-    });
   });
 
   test('offline business reconciliation rewrites every nested reference', () {

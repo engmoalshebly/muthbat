@@ -5,6 +5,7 @@ class DisputeMessageModel {
   final String message;
   final String createdAt;
   final String? senderName;
+  final String? senderWorkspace;
 
   const DisputeMessageModel({
     required this.id,
@@ -13,9 +14,13 @@ class DisputeMessageModel {
     required this.message,
     required this.createdAt,
     this.senderName,
+    this.senderWorkspace,
   });
 
-  factory DisputeMessageModel.fromMap(Map<String, dynamic> map, {String? currentUserId}) {
+  factory DisputeMessageModel.fromMap(
+    Map<String, dynamic> map, {
+    String? currentUserId,
+  }) {
     final senderId = map['sender_user_id'] as String;
     return DisputeMessageModel(
       id: map['id'] as String,
@@ -23,9 +28,16 @@ class DisputeMessageModel {
       senderUserId: senderId,
       message: map['message'] as String,
       createdAt: map['created_at'] as String,
+      senderWorkspace: map['sender_workspace'] as String?,
       // تسمية المرسل تُشتق في العميل (لا تضمين profiles — خطة 06 خطوة 3.4)
-      senderName: map['sender_name'] as String? ??
-          (currentUserId != null && senderId == currentUserId ? 'أنت' : null),
+      senderName:
+          map['sender_name'] as String? ??
+          switch (map['sender_workspace']) {
+            'customer' => 'الزبون',
+            'merchant' => 'التاجر',
+            _ =>
+              currentUserId != null && senderId == currentUserId ? 'أنت' : null,
+          },
     );
   }
 
@@ -34,6 +46,7 @@ class DisputeMessageModel {
       'id': id,
       'dispute_id': disputeId,
       'sender_user_id': senderUserId,
+      'sender_workspace': senderWorkspace,
       'message': message,
       'created_at': createdAt,
     };

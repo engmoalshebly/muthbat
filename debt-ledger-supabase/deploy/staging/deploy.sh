@@ -15,7 +15,7 @@ if [[ ! -f "$env_file" ]]; then
   exit 2
 fi
 
-required=(APP_ENV ALLOW_STAGING_DIRECT_AUTH PHONE_HMAC_KEY PHONE_ENCRYPTION_KEY WORKER_SECRET OPENWA_BASE_URL OPENWA_SESSION_ID OPENWA_API_KEY)
+required=(APP_ENV ALLOW_STAGING_DIRECT_AUTH WHATSAPP_OTP_ENABLED PHONE_HMAC_KEY PHONE_ENCRYPTION_KEY WORKER_SECRET OPENWA_BASE_URL OPENWA_SESSION_ID OPENWA_API_KEY)
 for key in "${required[@]}"; do
   value="$(sed -n "s/^${key}=//p" "$env_file" | tail -n 1)"
   if [[ -z "$value" || "$value" == replace-* ]]; then
@@ -25,6 +25,10 @@ for key in "${required[@]}"; do
 done
 if ! grep -qx 'APP_ENV=staging' "$env_file" || ! grep -qx 'ALLOW_STAGING_DIRECT_AUTH=false' "$env_file"; then
   echo 'Staging deploy requires APP_ENV=staging and ALLOW_STAGING_DIRECT_AUTH=false.' >&2
+  exit 2
+fi
+if ! grep -qx 'WHATSAPP_OTP_ENABLED=true' "$env_file"; then
+  echo 'Staging OTP deploy requires WHATSAPP_OTP_ENABLED=true.' >&2
   exit 2
 fi
 openwa_url="$(sed -n 's/^OPENWA_BASE_URL=//p' "$env_file" | tail -n 1)"
@@ -45,7 +49,8 @@ supabase secrets set --env-file "$env_file"
 # Deliberately excludes staging-direct-signup. Use enable-direct-signup.sh for
 # a short-lived, explicitly approved test and disable it immediately afterwards.
 functions=(
-  bootstrap-user-contact combine-statements customer-directory
+  phone-password-signup
+  bootstrap-user-contact combine-statements customer-directory customer-contacts local-notebook-import
   finalize-document-upload generate-statement member-invite
   process-automation-rules process-notification-outbox send-whatsapp-otp
   signed-document-upload verify-statement verify-whatsapp-otp

@@ -1,5 +1,10 @@
+import '../widgets/customer_sync_notice.dart';
 import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'dart:io';
+import 'dart:async';
+import 'dart:convert';
+import '../../../../core/sync/sync_engine.dart';
+import '../../../../core/database/app_database.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -32,6 +37,9 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
   late BusinessCustomerModel _customer;
   List<LedgerEntryModel> _entries = [];
   bool _isLoading = true;
+  bool _entriesLoadInFlight = false;
+  bool _entriesReloadRequested = false;
+  StreamSubscription<SyncProgress>? _syncSubscription;
   String? _selectedCurrencyFilter; // null = all, or 'YER', 'SAR', 'USD'
 
   String _currencySymbol(String code) => CurrencyCatalog.forCode(code).symbol;
@@ -46,37 +54,71 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
     super.initState();
     _customer = widget.customer;
     _loadEntries();
+    _syncSubscription = SyncEngine.instance.progressStream.listen((progress) {
+      if (mounted &&
+          (progress.state == SyncState.synced ||
+              progress.state == SyncState.error ||
+              progress.state == SyncState.idle)) {
+        _loadEntries(showLoading: false);
+      }
+    });
   }
 
-  Future<void> _loadEntries() async {
-    setState(() => _isLoading = true);
-    final repo = ref.read(merchantRepositoryProvider);
+  @override
+  void dispose() {
+    _syncSubscription?.cancel();
+    super.dispose();
+  }
 
-    // تحديث بيانات العميل الحالي
-    final updatedCust = await repo.getCustomer(_customer.id);
-    if (updatedCust != null) {
-      _customer = updatedCust;
+  Future<void> _loadEntries({bool showLoading = true}) async {
+    if (_entriesLoadInFlight) {
+      _entriesReloadRequested = true;
+      return;
     }
+    _entriesLoadInFlight = true;
+    if (showLoading && _entries.isEmpty) setState(() => _isLoading = true);
+    try {
+      final repo = ref.read(merchantRepositoryProvider);
 
-    final list = await repo.getLedgerEntries(
-      _customer.id,
-      currencyCode: _selectedCurrencyFilter,
-    );
-    if (mounted) {
-      setState(() {
-        _entries = list;
-        _isLoading = false;
-      });
+      // تحديث بيانات العميل الحالي
+      final resolvedId =
+          await AppDatabase.instance.getServerId(_customer.id) ?? _customer.id;
+      final updatedCust = await repo.getCustomer(resolvedId);
+      final list = await repo.getLedgerEntries(
+        resolvedId,
+        currencyCode: _selectedCurrencyFilter,
+      );
+      if (mounted) {
+        final nextCustomer = updatedCust ?? _customer;
+        if (!showLoading &&
+            jsonEncode(nextCustomer.toMap()) == jsonEncode(_customer.toMap()) &&
+            jsonEncode(list.map((item) => item.toMap()).toList()) ==
+                jsonEncode(_entries.map((item) => item.toMap()).toList())) {
+          return;
+        }
+        setState(() {
+          _customer = nextCustomer;
+          _entries = list;
+          _isLoading = false;
+        });
+      }
+    } catch (error) {
+      debugPrint('[CustomerLedgerScreen] Local ledger refresh failed: $error');
+      if (mounted && showLoading) setState(() => _isLoading = false);
+    } finally {
+      _entriesLoadInFlight = false;
+      if (_entriesReloadRequested && mounted) {
+        _entriesReloadRequested = false;
+        unawaited(_loadEntries(showLoading: false));
+      }
     }
   }
 
   void _openCreateEntry(String type) async {
-    final result = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) =>
-          CreateLedgerEntrySheet(customer: _customer, initialType: type),
+    final result = await CreateLedgerEntrySheet.open(
+      context,
+      customer: _customer,
+      initialType: type,
     );
 
     if (result == true) {
@@ -89,7 +131,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
     final result = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
+      backgroundColor: AppColors.transparent,
       builder: (_) => DiscountEntrySheet(customer: _customer),
     );
 
@@ -99,11 +141,81 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
     }
   }
 
+  Future<void> _showAddEntryActions() async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppColors.transparent,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+          decoration: const BoxDecoration(
+            color: AppColors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.borderMedium,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'إضافة عملية',
+                style: AppTypography.titleMedium(color: AppColors.textPrimary),
+              ),
+              const SizedBox(height: 10),
+              ListTile(
+                leading: const Icon(AppIcons.debt, color: AppColors.debtRed),
+                title: const Text('تسجيل دين'),
+                onTap: () => Navigator.pop(sheetContext, 'debt'),
+              ),
+              ListTile(
+                leading: const Icon(
+                  AppIcons.payment,
+                  color: AppColors.paymentGreen,
+                ),
+                title: const Text('تسجيل سداد'),
+                onTap: () => Navigator.pop(sheetContext, 'payment'),
+              ),
+              ListTile(
+                leading: const Icon(
+                  AppIcons.discount,
+                  color: AppColors.accentGold,
+                ),
+                title: const Text('إضافة خصم'),
+                onTap: () => Navigator.pop(sheetContext, 'discount'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    switch (action) {
+      case 'debt':
+      case 'payment':
+        _openCreateEntry(action!);
+        return;
+      case 'discount':
+        _openDiscount();
+        return;
+    }
+  }
+
   void _openReversal(LedgerEntryModel entry) async {
     final result = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
+      backgroundColor: AppColors.transparent,
       builder: (_) =>
           ReversalConfirmSheet(entry: entry, businessCustomerId: _customer.id),
     );
@@ -118,7 +230,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
+      backgroundColor: AppColors.transparent,
       builder: (_) => GenerateStatementSheet(customer: _customer),
     );
   }
@@ -174,7 +286,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
     TopNotice.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          ok ? 'تم تحديث بيانات العميل' : (error ?? 'تعذر تحديث بيانات العميل'),
+          ok ? 'تم حفظ تعديل العميل' : (error ?? 'تعذر تحديث بيانات العميل'),
         ),
         backgroundColor: ok ? AppColors.success : AppColors.error,
       ),
@@ -229,11 +341,11 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.transparent,
+      backgroundColor: AppColors.transparent,
       builder: (ctx) => Container(
         padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
         decoration: const BoxDecoration(
-          color: Colors.white,
+          color: AppColors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         ),
         child: Column(
@@ -336,7 +448,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
+      backgroundColor: AppColors.transparent,
       builder: (_) => _LedgerEntryDetailsSheet(
         entry: entry,
         currencySymbol: _currencySymbol(entry.currencyCode),
@@ -350,9 +462,17 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _showAddEntryActions,
+        tooltip: 'إضافة دين أو سداد أو خصم',
+        backgroundColor: AppColors.primary,
+        foregroundColor: AppColors.white,
+        icon: const Icon(Icons.add_rounded),
+        label: const Text('إضافة عملية'),
+      ),
       appBar: AppBar(
         backgroundColor: AppColors.surfaceLight,
-        surfaceTintColor: Colors.transparent,
+        surfaceTintColor: AppColors.transparent,
         elevation: 0,
         centerTitle: true,
         iconTheme: const IconThemeData(color: AppColors.textPrimary),
@@ -425,15 +545,16 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
             parent: AlwaysScrollableScrollPhysics(),
           ),
           slivers: [
+            SliverToBoxAdapter(child: CustomerSyncNotice(customer: _customer)),
             // 1. بطاقة الرصيد والبيانات العامة للعميل
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                 child: Container(
-                  padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
                   decoration: BoxDecoration(
-                    gradient: AppColors.brandGradient,
-                    borderRadius: BorderRadius.circular(24),
+                    gradient: AppColors.cardGradient,
+                    borderRadius: BorderRadius.circular(20),
                     boxShadow: [
                       BoxShadow(
                         color: AppColors.primary.withValues(alpha: 0.14),
@@ -448,22 +569,29 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.phone_outlined,
-                                color: Colors.white70,
-                                size: 16,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                _customer.phone ?? 'بدون رقم مسجل',
-                                style: AppTypography.bodySmall(
-                                  color: Colors.white70,
+                          Expanded(
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.phone_outlined,
+                                  color: AppColors.white70,
+                                  size: 16,
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 6),
+                                Flexible(
+                                  child: Text(
+                                    _customer.phone ?? 'بدون رقم مسجل',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: AppTypography.bodySmall(
+                                      color: AppColors.white70,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
+                          const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 10,
@@ -506,89 +634,10 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 12),
 
                       // بطاقة الأرصدة متعددة العملات
                       _buildHomeStyleBalanceCard(formatter),
-
-                      const SizedBox(height: 18),
-
-                      // أزرار الإجراء السريع (تسجيل دين / سداد / خصم)
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () => _openCreateEntry('debt'),
-                              icon: const Icon(AppIcons.debt, size: 18),
-                              label: const Text(
-                                'دين (+)',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
-                                ),
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.debtRed,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 13,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () => _openCreateEntry('payment'),
-                              icon: const Icon(AppIcons.payment, size: 18),
-                              label: const Text(
-                                'سداد (-)',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
-                                ),
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.paymentGreen,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 13,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: _openDiscount,
-                              icon: const Icon(AppIcons.discount, size: 18),
-                              label: const Text(
-                                'خصم',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
-                                ),
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.accentGold,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 13,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
                     ],
                   ),
                 ),
@@ -653,7 +702,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          'استخدم الأزرار أعلاه لتسجيل دين أو دفعة جديدة.',
+                          'استخدم زر «إضافة عملية» لتسجيل دين أو سداد أو خصم.',
                           style: AppTypography.caption(
                             color: AppColors.textSecondary,
                           ),
@@ -665,7 +714,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
               )
             else
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(20, 10, 20, 40),
+                padding: const EdgeInsets.fromLTRB(20, 10, 20, 100),
                 sliver: SliverList(
                   delegate: SliverChildBuilderDelegate((context, index) {
                     final entry = _entries[index];
@@ -681,7 +730,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                     IconData entryIcon;
                     String entrySign;
                     if (isReversal) {
-                      entryColor = AppColors.warning;
+                      entryColor = AppColors.transactionColor(entry.entryType);
                       entryIcon = AppIcons.reversal;
                       entrySign = entry.direction == 'debit' ? '+' : '-';
                     } else if (isDebt) {
@@ -693,7 +742,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                       entryIcon = AppIcons.payment;
                       entrySign = '-';
                     } else if (isDiscount) {
-                      entryColor = AppColors.accentGold;
+                      entryColor = AppColors.discount;
                       entryIcon = AppIcons.discount;
                       entrySign = '-';
                     } else {
@@ -730,7 +779,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                           decoration: BoxDecoration(
                             color: isReversed
                                 ? AppColors.backgroundLight
-                                : Colors.white,
+                                : AppColors.white,
                             borderRadius: BorderRadius.circular(18),
                             border: Border.all(
                               color: isReversed
@@ -1004,7 +1053,8 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                                     ),
                                   ),
                                   const SizedBox(height: 4),
-                                  if (entry.syncStatus == 'dead_letter')
+                                  if (entry.syncStatus == 'dead_letter' ||
+                                      entry.syncStatus == 'blocked')
                                     Container(
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: 5,
@@ -1014,9 +1064,11 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                                         color: AppColors.errorLight,
                                         borderRadius: BorderRadius.circular(4),
                                       ),
-                                      child: const Text(
-                                        'مرفوض',
-                                        style: TextStyle(
+                                      child: Text(
+                                        entry.syncStatus == 'blocked'
+                                            ? 'تحتاج مراجعة بيانات العميل'
+                                            : 'مرفوض',
+                                        style: const TextStyle(
                                           fontSize: 8,
                                           color: AppColors.error,
                                           fontWeight: FontWeight.bold,
@@ -1030,7 +1082,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                                         vertical: 1.5,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: Colors.orange.withValues(
+                                        color: AppColors.textMuted.withValues(
                                           alpha: 0.15,
                                         ),
                                         borderRadius: BorderRadius.circular(4),
@@ -1039,16 +1091,16 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
                                           Icon(
-                                            Icons.hourglass_top_rounded,
+                                            Icons.check_circle_outline,
                                             size: 9,
-                                            color: Colors.orange,
+                                            color: AppColors.textMuted,
                                           ),
                                           SizedBox(width: 2),
                                           Text(
-                                            'معلق',
+                                            'محفوظة',
                                             style: TextStyle(
                                               fontSize: 8,
-                                              color: Colors.orange,
+                                              color: AppColors.textMuted,
                                               fontWeight: FontWeight.bold,
                                             ),
                                           ),
@@ -1119,9 +1171,9 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.08),
+            color: AppColors.white.withValues(alpha: 0.08),
             borderRadius: BorderRadius.circular(11),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
+            border: Border.all(color: AppColors.white.withValues(alpha: 0.07)),
           ),
           child: Row(
             children: [
@@ -1141,7 +1193,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                     Text(
                       label,
                       style: const TextStyle(
-                        color: Colors.white70,
+                        color: AppColors.white70,
                         fontSize: 10,
                         fontWeight: FontWeight.w600,
                       ),
@@ -1150,7 +1202,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
                     Text(
                       '${formatter.format(amount)} ${firstInfo.symbol}',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: AppColors.white,
                         fontSize: 12,
                         fontWeight: FontWeight.w800,
                       ),
@@ -1173,7 +1225,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
             Container(
               padding: const EdgeInsets.all(5),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.12),
+                color: AppColors.white.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Icon(
@@ -1186,7 +1238,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
             Text(
               '💱 ${firstInfo.name}',
               style: const TextStyle(
-                color: Colors.white,
+                color: AppColors.white,
                 fontSize: 13,
                 fontWeight: FontWeight.w800,
               ),
@@ -1195,7 +1247,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.12),
+                color: AppColors.white.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(7),
               ),
               child: Text(
@@ -1220,7 +1272,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
               Text(
                 formatter.format(first.value.abs()),
                 style: AppTypography.financialAmount(
-                  color: Colors.white,
+                  color: AppColors.white,
                   fontSize: 26,
                   fontWeight: FontWeight.w900,
                 ),
@@ -1229,7 +1281,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
               Text(
                 firstInfo.symbol,
                 style: const TextStyle(
-                  color: Colors.white70,
+                  color: AppColors.white70,
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
                 ),
@@ -1238,7 +1290,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
               Text(
                 first.value > 0 ? 'إجمالي ما لك (ديون)' : 'الرصيد الحالي',
                 style: const TextStyle(
-                  color: Colors.white70,
+                  color: AppColors.white70,
                   fontSize: 10.5,
                   fontWeight: FontWeight.w600,
                 ),
@@ -1254,7 +1306,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
               return Text(
                 '${formatter.format(entry.value.abs())} ${info.symbol}',
                 style: const TextStyle(
-                  color: Colors.white,
+                  color: AppColors.white,
                   fontSize: 17,
                   fontWeight: FontWeight.w800,
                 ),
@@ -1284,7 +1336,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
           Text(
             'الأرصدة معروضة منفصلة حسب العملة',
             style: const TextStyle(
-              color: Colors.white70,
+              color: AppColors.white70,
               fontSize: 10,
               fontWeight: FontWeight.w600,
             ),
@@ -1303,7 +1355,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
-          color: isSelected ? AppColors.primary : Colors.white,
+          color: isSelected ? AppColors.primary : AppColors.white,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: isSelected ? AppColors.primary : AppColors.borderLight,
@@ -1314,7 +1366,7 @@ class _CustomerLedgerScreenState extends ConsumerState<CustomerLedgerScreen> {
           style: TextStyle(
             fontSize: 10.5,
             fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
-            color: isSelected ? Colors.white : AppColors.textPrimary,
+            color: isSelected ? AppColors.white : AppColors.textPrimary,
           ),
         ),
       ),
@@ -1410,13 +1462,7 @@ class _LedgerEntryDetailsSheet extends StatelessWidget {
     return _attachmentPath.split(RegExp(r'[\\/]')).last;
   }
 
-  Color get _accentColor {
-    if (entry.entryType == 'payment' || entry.entryType == 'discount') {
-      return AppColors.paymentGreen;
-    }
-    if (entry.entryType == 'reversal') return AppColors.warning;
-    return AppColors.debtRed;
-  }
+  Color get _accentColor => AppColors.transactionColor(entry.entryType);
 
   Widget _detailRow({required String label, required String value}) {
     return Padding(
@@ -1485,12 +1531,12 @@ class _LedgerEntryDetailsSheet extends StatelessWidget {
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 8),
-                color: Colors.black.withValues(alpha: 0.55),
+                color: AppColors.black.withValues(alpha: 0.55),
                 child: const Text(
                   'اضغط لعرض الصورة كاملة',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: Colors.white,
+                    color: AppColors.white,
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                   ),
@@ -1595,9 +1641,9 @@ class _LedgerEntryDetailsSheet extends StatelessWidget {
   void _showImageViewer(BuildContext context) {
     showDialog<void>(
       context: context,
-      barrierColor: Colors.black87,
+      barrierColor: AppColors.black87,
       builder: (_) => Dialog(
-        backgroundColor: Colors.transparent,
+        backgroundColor: AppColors.transparent,
         insetPadding: const EdgeInsets.all(12),
         child: Stack(
           children: [
@@ -1615,8 +1661,8 @@ class _LedgerEntryDetailsSheet extends StatelessWidget {
               child: IconButton(
                 onPressed: () => Navigator.pop(context),
                 style: IconButton.styleFrom(
-                  backgroundColor: Colors.black54,
-                  foregroundColor: Colors.white,
+                  backgroundColor: AppColors.black54,
+                  foregroundColor: AppColors.white,
                 ),
                 icon: const Icon(Icons.close_rounded),
               ),
@@ -1655,7 +1701,7 @@ class _LedgerEntryDetailsSheet extends StatelessWidget {
         maxHeight: MediaQuery.of(context).size.height * 0.88,
       ),
       decoration: const BoxDecoration(
-        color: Colors.white,
+        color: AppColors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       child: SafeArea(
@@ -1765,6 +1811,8 @@ class _LedgerEntryDetailsSheet extends StatelessWidget {
                         ? 'موثقة على الخادم'
                         : entry.syncStatus == 'dead_letter'
                         ? 'مرفوضة وتحتاج مراجعة'
+                        : entry.syncStatus == 'blocked'
+                        ? 'محفوظة محليًا؛ متوقفة بسبب فشل العملية السابقة'
                         : entry.syncStatus == 'failed'
                         ? 'محفوظة؛ تعذّر الإرسال مؤقتًا'
                         : 'محفوظة وتنتظر الإرسال',
@@ -1775,15 +1823,9 @@ class _LedgerEntryDetailsSheet extends StatelessWidget {
                         : AppColors.warning,
                   ),
                   _statusChip(
-                    icon: entry.confirmationStatus == 'confirmed'
-                        ? Icons.verified_rounded
-                        : Icons.info_outline_rounded,
-                    label: entry.confirmationStatus == 'confirmed'
-                        ? 'مؤكدة من العميل'
-                        : 'حالة التأكيد: ${entry.confirmationStatus}',
-                    color: entry.confirmationStatus == 'confirmed'
-                        ? AppColors.success
-                        : AppColors.textSecondary,
+                    icon: Icons.receipt_long_outlined,
+                    label: 'تُحتسب مباشرة دون انتظار موافقة العميل',
+                    color: AppColors.textSecondary,
                   ),
                   if (entry.isReversed)
                     _statusChip(

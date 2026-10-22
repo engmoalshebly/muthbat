@@ -289,8 +289,13 @@ void main() {
   });
   test('restore never overwrites an existing notebook', () async {
     final text = await store.backup();
-    await expectLater(store.restore(text), throwsStateError);
-    expect((await store.current())!['name'], 'حساباتي');
+    final original = await store.current();
+    await store.restore(text);
+    final restored = await store.current();
+    expect(restored!['id'], isNot(original!['id']));
+    expect((await store.notebooks()).length, 2);
+    await store.selectNotebook(original['id'] as String);
+    expect(await store.current(), original);
   });
   test(
     'a password-protected backup round-trips into a fresh store and rejects wrong or missing passwords',
@@ -359,12 +364,45 @@ void main() {
         backupPath: '/private/transfer-backup.enc',
       );
       expect((await store.current())!['transfer_checkpoint'], 'backup_created');
+      await store.reserveTransfer(owner);
+      expect((await store.current())!['transfer_checkpoint'], 'backup_created');
       await store.markTransferCheckpoint(owner, 'uploaded');
+      await store.markTransferCheckpoint(owner, 'backup_created');
+      expect((await store.current())!['transfer_checkpoint'], 'uploaded');
+      await expectLater(store.completeTransfer(owner, other), throwsStateError);
       await store.markTransferCheckpoint(owner, 'verified');
       await store.completeTransfer(owner, other);
       expect((await store.current())!['transfer_state'], 'complete');
       expect((await store.current())!['transfer_checkpoint'], 'complete');
       expect(LocalLedgerStore.balance((await store.current())!, id), 500000);
+    },
+  );
+
+  test(
+    'transfer checkpoints remain attached to their notebook after switching',
+    () async {
+      const owner = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+      final reviewed = (await store.current())!;
+      final originalId = reviewed['id'] as String;
+      final backup = await store.backup();
+      await store.reserveTransfer(owner, expectedSnapshot: reviewed);
+      await store.restore(backup);
+      // A reserved notebook restore must reuse its original import key.
+      expect((await store.current())!['id'], originalId);
+      // Open a genuinely different local notebook to exercise targeted progress.
+      final other = LocalLedgerStore.decodeBackup(backup);
+      other['id'] = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+      await store.restore(await LocalLedgerStore.encodeBackup(other));
+      final restoredId = (await store.current())!['id'];
+      await store.markTransferCheckpoint(
+        owner,
+        'backup_created',
+        notebookId: originalId,
+      );
+      expect((await store.current())!['id'], restoredId);
+      expect((await store.current())!['transfer_state'], 'local');
+      await store.selectNotebook(originalId);
+      expect((await store.current())!['transfer_checkpoint'], 'backup_created');
     },
   );
 

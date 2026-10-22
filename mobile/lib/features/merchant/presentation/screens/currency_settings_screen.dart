@@ -27,7 +27,11 @@ class _CurrencySettingsScreenState
     if (!_initialized) {
       final state = ref.read(merchantControllerProvider);
       _selected = state.supportedCurrencies
-          .where((code) => code != state.currencyCode)
+          .where(
+            (code) =>
+                code != state.currencyCode &&
+                CurrencyCatalog.allowedCodes.contains(code),
+          )
           .toSet();
       _initialized = true;
     }
@@ -40,7 +44,9 @@ class _CurrencySettingsScreenState
     if (!mounted) return;
     if (ok) {
       TopNotice.of(context).showSnackBar(
-        const SnackBar(content: Text('تم تحديث العملات المفعلة بنجاح.')),
+        const SnackBar(
+          content: Text('تم حفظ العملات على الجهاز وستتزامن تلقائيًا.'),
+        ),
       );
       Navigator.pop(context);
     } else {
@@ -59,7 +65,13 @@ class _CurrencySettingsScreenState
     final base = CurrencyCatalog.forCode(state.currencyCode, state.currencies);
     final available = state.currencies.isEmpty
         ? CurrencyCatalog.defaults
-        : state.currencies.where((currency) => currency.isActive).toList();
+        : state.currencies
+              .where(
+                (currency) =>
+                    currency.isActive &&
+                    CurrencyCatalog.allowedCodes.contains(currency.code),
+              )
+              .toList();
 
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,

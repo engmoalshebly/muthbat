@@ -1,4 +1,8 @@
+import 'auth_route_guard.dart';
+import '../../features/notifications/notifications_screen.dart';
+import '../../features/splash/presentation/screens/welcome_screen.dart';
 import 'package:flutter/material.dart';
+import '../../features/auth/presentation/screens/workspaces_screen.dart';
 import '../../features/app_lock/app_lock_settings_screen.dart';
 import '../../features/local_ledger/local_ledger_screen.dart';
 import '../../features/auth/presentation/screens/account_recovery_screen.dart';
@@ -19,17 +23,19 @@ import '../../features/merchant/presentation/screens/disputes_list_screen.dart';
 import '../../features/merchant/presentation/screens/merchant_home_screen.dart';
 import '../../features/merchant/presentation/screens/merchant_profile_screen.dart';
 import '../../features/merchant/presentation/screens/statement_preview_screen.dart';
-import '../../features/merchant/presentation/screens/team_screen.dart';
 import '../../features/splash/presentation/screens/splash_screen.dart';
 import '../../features/sync/presentation/rejected_operations_screen.dart';
+import '../../features/support/presentation/darai_chat_screen.dart';
 
 /// مسارات التنقل المعتمدة في تطبيق «مُثبَت | MUTHBAT»
 class AppRoutes {
   AppRoutes._();
 
   static const String splash = '/';
+  static const String welcome = '/welcome';
   static const String login = '/login';
   static const String localLedger = '/local-ledger';
+  static const String workspaces = '/workspaces';
   static const String register = '/register';
   static const String otp = '/otp';
   static const String recovery = '/recovery';
@@ -40,13 +46,14 @@ class AppRoutes {
   static const String disputesList = '/disputes-list';
   static const String disputeDetail = '/dispute-detail';
   static const String statementPreview = '/statement-preview';
-  static const String team = '/team';
   static const String merchantProfile = '/merchant-profile';
   static const String currencySettings = '/currency-settings';
   static const String businessProfileEdit = '/business-profile-edit';
   static const String resetPassword = '/reset-password';
   static const String appLockSettings = '/app-lock-settings';
   static const String rejectedOperations = '/rejected-operations';
+  static const String daraiChat = '/darai-chat';
+  static const String notifications = '/notifications';
 
   static Route<dynamic> _errorRoute(String message) {
     return MaterialPageRoute(
@@ -54,46 +61,92 @@ class AppRoutes {
     );
   }
 
+  static MaterialPageRoute<dynamic> _guardedRoute({
+    required WidgetBuilder builder,
+    required RouteSettings settings,
+  }) => MaterialPageRoute(
+    settings: settings,
+    builder: (_) => AuthRouteGuard(settings: settings, builder: builder),
+  );
+
+  /// Guard account screens pushed directly with typed constructor arguments.
+  static MaterialPageRoute<dynamic> accountPage({
+    required WidgetBuilder builder,
+  }) => _guardedRoute(
+    builder: builder,
+    settings: const RouteSettings(name: '/account-screen'),
+  );
+
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
     switch (settings.name) {
+      case notifications:
+        final notificationArgs = settings.arguments;
+        final notificationId = notificationArgs is Map
+            ? notificationArgs['notificationId'] as String?
+            : notificationArgs as String?;
+        final notificationWorkspace = notificationArgs is Map
+            ? notificationArgs['workspace'] as String? ?? 'auto'
+            : 'auto';
+        return _guardedRoute(
+          settings: settings,
+          builder: (_) => NotificationsScreen(
+            initialId: notificationId,
+            workspace: notificationWorkspace,
+          ),
+        );
+      case welcome:
+        return _guardedRoute(
+          builder: (_) => const WelcomeScreen(),
+          settings: settings,
+        );
+      case daraiChat:
+        return _guardedRoute(
+          builder: (_) => const DaraiChatScreen(),
+          settings: settings,
+        );
       case rejectedOperations:
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) => const RejectedOperationsScreen(),
           settings: settings,
         );
       case appLockSettings:
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) => const AppLockSettingsScreen(),
           settings: settings,
         );
       case localLedger:
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) => const LocalLedgerScreen(),
           settings: settings,
         );
+      case workspaces:
+        return _guardedRoute(
+          builder: (_) => const WorkspacesScreen(),
+          settings: settings,
+        );
       case businessSetup:
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) => const BusinessSetupScreen(),
           settings: settings,
         );
       case login:
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) => const LoginScreen(),
           settings: settings,
         );
       case register:
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) =>
               RegisterScreen(customerMode: settings.arguments == 'customer'),
           settings: settings,
         );
       case otp:
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) => const OtpVerificationScreen(),
           settings: settings,
         );
       case recovery:
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) => const AccountRecoveryScreen(),
           settings: settings,
         );
@@ -101,12 +154,12 @@ class AppRoutes {
         final initialTab = settings.arguments is int
             ? settings.arguments as int
             : 0;
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) => MerchantHomeScreen(initialTab: initialTab),
           settings: settings,
         );
       case customerHome:
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) => const CustomerHomeScreen(),
           settings: settings,
         );
@@ -115,12 +168,12 @@ class AppRoutes {
         if (customer is! BusinessCustomerModel) {
           return _errorRoute('customerLedger requires BusinessCustomerModel');
         }
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) => CustomerLedgerScreen(customer: customer),
           settings: settings,
         );
       case disputesList:
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) => const DisputesListScreen(),
           settings: settings,
         );
@@ -129,7 +182,7 @@ class AppRoutes {
         if (dispute is! DisputeModel) {
           return _errorRoute('disputeDetail requires DisputeModel');
         }
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) => DisputeDetailScreen(dispute: dispute),
           settings: settings,
         );
@@ -144,42 +197,38 @@ class AppRoutes {
         }
         final statement = args['statement'] as StatementModel;
         final customer = args['customer'] as BusinessCustomerModel;
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) =>
               StatementPreviewScreen(statement: statement, customer: customer),
           settings: settings,
         );
-      case team:
-        return MaterialPageRoute(
-          builder: (_) => const TeamScreen(),
-          settings: settings,
-        );
       case merchantProfile:
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) => const MerchantProfileScreen(),
           settings: settings,
         );
       case currencySettings:
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) => const CurrencySettingsScreen(),
           settings: settings,
         );
       case businessProfileEdit:
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) => const BusinessProfileEditScreen(),
           settings: settings,
         );
       case resetPassword:
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) => const ResetPasswordScreen(),
           settings: settings,
         );
       case splash:
-      default:
-        return MaterialPageRoute(
+        return _guardedRoute(
           builder: (_) => const SplashScreen(),
           settings: settings,
         );
+      default:
+        return _errorRoute('المسار المطلوب غير موجود.');
     }
   }
 }

@@ -1,20 +1,37 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'app/app.dart';
 import 'app/theme/app_colors.dart';
 import 'core/config/supabase_config.dart';
+import 'core/services/push_notification_service.dart';
 import 'core/sync/sync_engine.dart';
 import 'core/sync/background_sync.dart';
+import 'core/security/secure_auth_storage.dart';
 import 'features/local_ledger/local_ledger_store.dart';
+import 'firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // تهيئة Firebase دون تعطيل الدفتر المحلي في حال عدم توفره
+  try {
+    if (defaultTargetPlatform == TargetPlatform.android || kIsWeb) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    }
+  } catch (e) {
+    debugPrint('[Main] Firebase initialization failed: $e');
+  }
+
   try {
     await LocalLedgerStore.instance.database;
-  } catch (e) {
+  } catch (e, stackTrace) {
+    debugPrint('[Main] Local storage bootstrap failed: $e\n$stackTrace');
     runApp(
       _BootstrapErrorApp(message: 'تعذر فتح التخزين المحلي. لم تُحذف بياناتك.'),
     );
@@ -29,11 +46,12 @@ void main() async {
     await Supabase.initialize(
       url: SupabaseConfig.effectiveUrl,
       publishableKey: SupabaseConfig.effectiveAnonKey,
-      authOptions: const FlutterAuthClientOptions(
-        authFlowType: AuthFlowType.pkce,
-      ),
+      authOptions: secureAuthOptions(SupabaseConfig.effectiveUrl),
     );
     SupabaseConfig.cloudReady = true;
+
+    // 3. تهيئة خدمة إشعارات الدفع (FCM)
+    await PushNotificationService.instance.init();
   } catch (e) {
     debugPrint('[Main] Bootstrap failed: $e');
   }
@@ -51,7 +69,7 @@ void main() async {
   // ضبط شريط الحالة الافتراضي للواجهة
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
+      statusBarColor: AppColors.transparent,
       statusBarIconBrightness: Brightness.light,
       statusBarBrightness: Brightness.dark,
       systemNavigationBarColor: AppColors.backgroundLight,
@@ -82,7 +100,7 @@ class _BootstrapErrorApp extends StatelessWidget {
                 children: [
                   const Icon(
                     Icons.error_outline_rounded,
-                    color: Colors.white,
+                    color: AppColors.white,
                     size: 54,
                   ),
                   const SizedBox(height: 18),
@@ -90,17 +108,17 @@ class _BootstrapErrorApp extends StatelessWidget {
                     'تعذر تشغيل التطبيق',
                     textDirection: TextDirection.rtl,
                     style: TextStyle(
-                      color: Colors.white,
+                      color: AppColors.white,
                       fontSize: 22,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 10),
                   const Text(
-                    'تحقق من إعدادات الاتصال ثم أعد فتح التطبيق.',
+                    'تعذر فتح التخزين المحلي. أعد فتح التطبيق، وإن استمرت المشكلة تواصل مع الدعم.',
                     textDirection: TextDirection.rtl,
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white70, fontSize: 15),
+                    style: TextStyle(color: AppColors.white70, fontSize: 15),
                   ),
                   const SizedBox(height: 14),
                   Text(
@@ -108,7 +126,10 @@ class _BootstrapErrorApp extends StatelessWidget {
                     textAlign: TextAlign.center,
                     maxLines: 4,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white54, fontSize: 10),
+                    style: const TextStyle(
+                      color: AppColors.white54,
+                      fontSize: 10,
+                    ),
                   ),
                 ],
               ),

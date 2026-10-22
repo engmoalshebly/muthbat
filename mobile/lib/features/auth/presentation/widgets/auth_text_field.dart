@@ -39,15 +39,15 @@ class AuthTextField extends StatelessWidget {
         if (label != null) ...[
           Text(
             label!,
-            style: AppTypography.titleSmall(color: AppColors.textPrimary).copyWith(
-              fontWeight: FontWeight.w600,
-            ),
+            style: AppTypography.titleSmall(
+              color: AppColors.textPrimary,
+            ).copyWith(fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
         ],
         Container(
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppColors.white,
             borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
@@ -64,9 +64,9 @@ class AuthTextField extends StatelessWidget {
             autofocus: autofocus,
             textDirection: textDirection,
             onChanged: onChanged,
-            style: AppTypography.bodyLarge(color: AppColors.textPrimary).copyWith(
-              fontWeight: FontWeight.w600,
-            ),
+            style: AppTypography.bodyLarge(
+              color: AppColors.textPrimary,
+            ).copyWith(fontWeight: FontWeight.w600),
             decoration: InputDecoration(
               hintText: hintText,
               hintStyle: AppTypography.bodyMedium(color: AppColors.textMuted),
@@ -76,30 +76,51 @@ class AuthTextField extends StatelessWidget {
                       child: prefixWidget,
                     )
                   : null,
-              prefixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
+              prefixIconConstraints: const BoxConstraints(
+                minWidth: 0,
+                minHeight: 0,
+              ),
               suffixIcon: suffixIcon,
               filled: true,
-              fillColor: Colors.white,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+              fillColor: AppColors.white,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 16,
+              ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(16),
-                borderSide: const BorderSide(color: AppColors.borderLight, width: 1.2),
+                borderSide: const BorderSide(
+                  color: AppColors.borderLight,
+                  width: 1.2,
+                ),
               ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(16),
-                borderSide: const BorderSide(color: AppColors.borderLight, width: 1.2),
+                borderSide: const BorderSide(
+                  color: AppColors.borderLight,
+                  width: 1.2,
+                ),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(16),
-                borderSide: const BorderSide(color: AppColors.secondary, width: 1.8),
+                borderSide: const BorderSide(
+                  color: AppColors.secondary,
+                  width: 1.8,
+                ),
               ),
               errorBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(16),
-                borderSide: const BorderSide(color: AppColors.error, width: 1.5),
+                borderSide: const BorderSide(
+                  color: AppColors.error,
+                  width: 1.5,
+                ),
               ),
               focusedErrorBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(16),
-                borderSide: const BorderSide(color: AppColors.error, width: 1.8),
+                borderSide: const BorderSide(
+                  color: AppColors.error,
+                  width: 1.8,
+                ),
               ),
             ),
           ),
@@ -110,9 +131,9 @@ class AuthTextField extends StatelessWidget {
             padding: const EdgeInsets.only(right: 8),
             child: Text(
               errorText!,
-              style: AppTypography.bodySmall(color: AppColors.error).copyWith(
-                fontWeight: FontWeight.w500,
-              ),
+              style: AppTypography.bodySmall(
+                color: AppColors.error,
+              ).copyWith(fontWeight: FontWeight.w500),
             ),
           ),
         ],

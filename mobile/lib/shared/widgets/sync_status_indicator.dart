@@ -44,7 +44,7 @@ class SyncStatusIndicator extends StatelessWidget {
         label = 'مزامنة...';
         break;
       case SyncState.offline:
-        badgeColor = Colors.orange;
+        badgeColor = AppColors.orange;
         icon = AppIcons.offline;
         label = progress.pendingCount > 0
             ? '${progress.pendingCount} معلق'
@@ -58,7 +58,7 @@ class SyncStatusIndicator extends StatelessWidget {
       case SyncState.synced:
       case SyncState.idle:
         if (progress.pendingCount > 0) {
-          badgeColor = Colors.orange;
+          badgeColor = AppColors.orange;
           icon = AppIcons.pendingUpload;
           label = '${progress.pendingCount} معلق';
         } else {
@@ -125,8 +125,8 @@ class SyncStatusIndicator extends StatelessWidget {
         message = 'جاري مزامنة ${progress.pendingCount} عملية مع السيرفر...';
         break;
       case SyncState.offline:
-        bgColor = Colors.orange.withValues(alpha: 0.12);
-        textColor = Colors.orange.shade800;
+        bgColor = AppColors.orange.withValues(alpha: 0.12);
+        textColor = AppColors.warningStrong;
         icon = AppIcons.offline;
         message = progress.pendingCount > 0
             ? 'أنت تعمل محلياً (${progress.pendingCount} عملية بانتظار عودة الشبكة)'
@@ -142,8 +142,8 @@ class SyncStatusIndicator extends StatelessWidget {
         break;
       default:
         if (progress.pendingCount > 0) {
-          bgColor = Colors.orange.withValues(alpha: 0.12);
-          textColor = Colors.orange.shade800;
+          bgColor = AppColors.orange.withValues(alpha: 0.12);
+          textColor = AppColors.warningStrong;
           icon = AppIcons.pendingUpload;
           message =
               '${progress.pendingCount} عملية محفوظة محلياً بانتظار المزامنة';
@@ -241,7 +241,7 @@ class _SyncDetailsSheet extends StatelessWidget {
             decoration: BoxDecoration(
               color: AppColors.backgroundLight,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey.shade200),
+              border: Border.all(color: AppColors.neutralGrey200),
             ),
             child: Column(
               children: [
@@ -265,9 +265,9 @@ class _SyncDetailsSheet extends StatelessWidget {
                   ),
                 ],
                 const Divider(height: 20),
-                _buildRow('محفوظ على الجهاز', 'آمن محليًا', Colors.blueGrey),
+                _buildRow('محفوظ على الجهاز', 'آمن محليًا', AppColors.blueGrey),
                 const Divider(height: 20),
-                _buildRow('ينتظر الإرسال', 'غير موثق بعد', Colors.orange),
+                _buildRow('ينتظر الإرسال', 'غير موثق بعد', AppColors.orange),
                 const Divider(height: 20),
                 _buildRow('موثق على الخادم', 'متزامن', AppColors.success),
                 const Divider(height: 20),
@@ -289,7 +289,7 @@ class _SyncDetailsSheet extends StatelessWidget {
             label: const Text('مزامنة الآن يدويّاً'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
+              foregroundColor: AppColors.white,
               padding: const EdgeInsets.symmetric(vertical: 14),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(14),

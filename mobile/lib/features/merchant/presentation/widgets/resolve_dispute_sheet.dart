@@ -63,23 +63,18 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
         TopNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              _selectedResolution == 'accepted'
-                  ? 'تم قبول الاعتراض وعكس القيد المالي بنجاح'
-                  : (_selectedResolution == 'partially_accepted'
-                        ? 'تم قبول الاعتراض جزئياً وتصحيح المبلغ'
-                        : 'تم رفض الاعتراض والإبقاء على القيد'),
+              'حُفظ القرار على الجهاز وسيُرسل تلقائيًا. تظهر النتيجة المالية النهائية بعد اعتماد الخادم.',
             ),
-            backgroundColor: _selectedResolution == 'rejected'
-                ? AppColors.debtRed
-                : AppColors.success,
+            backgroundColor: AppColors.success,
             behavior: SnackBarBehavior.floating,
           ),
         );
       } else {
         TopNotice.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'حدث خطأ أثناء معالجة الاعتراض. يرجى المحاولة مرة أخرى.',
+              ref.read(merchantControllerProvider).lastError ??
+                  'تعذر حفظ القرار. حاول مجددًا.',
             ),
             backgroundColor: AppColors.error,
             behavior: SnackBarBehavior.floating,
@@ -102,7 +97,7 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
         bottom: MediaQuery.of(context).viewInsets.bottom + 24,
       ),
       decoration: const BoxDecoration(
-        color: Colors.white,
+        color: AppColors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       child: Form(
@@ -132,7 +127,7 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
               ),
               const SizedBox(height: 4),
               Text(
-                'المبلغ المعترض عليه: ${currencyFormatter.format(origAmount)} ${ref.read(merchantControllerProvider).currency}',
+                'المبلغ المعترض عليه: ${currencyFormatter.format(origAmount)} ${widget.dispute.currencyCode ?? ref.read(merchantControllerProvider).currency}',
                 style: AppTypography.caption(color: AppColors.textSecondary),
                 textAlign: TextAlign.center,
               ),

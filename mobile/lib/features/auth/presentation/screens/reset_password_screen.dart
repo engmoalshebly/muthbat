@@ -10,8 +10,7 @@ import '../widgets/auth_header.dart';
 import '../widgets/auth_text_field.dart';
 import '../validators/auth_validators.dart';
 
-/// شاشة تعيين كلمة سر جديدة بعد نجاح تحقق رمز الاسترداد (خطة 04 §3.3).
-/// تُفتح بعد verifyRecoveryOtp الناجح حيث تكون جلسة Supabase نشطة.
+/// شاشة تعيين كلمة السر؛ يتحقق الخادم من الرمز ويغير الكلمة في طلب واحد.
 class ResetPasswordScreen extends ConsumerStatefulWidget {
   const ResetPasswordScreen({super.key});
 
@@ -26,6 +25,7 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
       TextEditingController();
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
+  bool _isSubmitting = false;
   String? _passwordError;
   String? _confirmPasswordError;
 
@@ -37,6 +37,7 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
   }
 
   void _handleReset() async {
+    if (_isSubmitting) return;
     final password = _passwordController.text;
     final confirmPassword = _confirmPasswordController.text;
 
@@ -71,9 +72,19 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
       _confirmPasswordError = null;
     });
 
+    setState(() => _isSubmitting = true);
     final success = await ref
         .read(authControllerProvider.notifier)
         .completePasswordReset(newPassword: password);
+
+    if (!mounted) return;
+    setState(() => _isSubmitting = false);
+
+    if (!success &&
+        ref.read(authControllerProvider).status == AuthStatus.otpSent) {
+      Navigator.pop(context);
+      return;
+    }
 
     if (success && mounted) {
       final userType = ref.read(authControllerProvider).userType;
@@ -101,7 +112,7 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
+        backgroundColor: AppColors.transparent,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(
@@ -121,7 +132,7 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
               const AuthHeader(
                 title: 'كلمة سر جديدة',
                 subtitle:
-                    'تم تأكيد هويتك بنجاح. عيّن كلمة سر جديدة قوية لحماية سجلاتك المالية',
+                    'سيُتحقق من رمز الاسترداد عند حفظ كلمة السر الجديدة. استخدم الرمز الأحدث قبل انتهاء صلاحيته.',
                 showLogo: true,
               ),
 
@@ -131,7 +142,7 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
               Container(
                     padding: const EdgeInsets.all(22),
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: AppColors.white,
                       borderRadius: BorderRadius.circular(24),
                       border: Border.all(
                         color: AppColors.borderLight,

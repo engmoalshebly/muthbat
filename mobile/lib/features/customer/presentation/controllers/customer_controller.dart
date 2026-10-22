@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../../data/customer_repository.dart';
 import '../../data/customer_cache.dart';
+import '../../data/customer_local_store.dart';
 import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../../data/models/customer_summary_model.dart';
 
@@ -15,6 +17,8 @@ class CustomerHomeState {
   final bool hasCustomerAccount; // false = لا سجل customers مرتبط بالمستخدم
   final String? customerId;
   final String? errorMessage; // خطأ التحميل العام (يُعرض مع زر إعادة المحاولة)
+  final String? phoneLinkError;
+  final bool requiresPhoneVerification;
   final List<CustomerBusinessSummary> summaries;
   final List<CustomerLinkRequestModel> linkRequests;
   final List<CustomerPendingEntry> pendingEntries;
@@ -27,6 +31,8 @@ class CustomerHomeState {
     this.hasCustomerAccount = true,
     this.customerId,
     this.errorMessage,
+    this.phoneLinkError,
+    this.requiresPhoneVerification = false,
     this.summaries = const [],
     this.linkRequests = const [],
     this.pendingEntries = const [],
@@ -39,8 +45,12 @@ class CustomerHomeState {
     bool? isLoading,
     bool? hasCustomerAccount,
     String? customerId,
+    bool clearCustomerId = false,
     String? errorMessage,
     bool clearError = false,
+    String? phoneLinkError,
+    bool clearPhoneLinkError = false,
+    bool? requiresPhoneVerification,
     List<CustomerBusinessSummary>? summaries,
     List<CustomerLinkRequestModel>? linkRequests,
     List<CustomerPendingEntry>? pendingEntries,
@@ -51,8 +61,13 @@ class CustomerHomeState {
       updatedAt: updatedAt ?? this.updatedAt,
       isLoading: isLoading ?? this.isLoading,
       hasCustomerAccount: hasCustomerAccount ?? this.hasCustomerAccount,
-      customerId: customerId ?? this.customerId,
+      customerId: clearCustomerId ? null : (customerId ?? this.customerId),
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
+      phoneLinkError: clearPhoneLinkError
+          ? null
+          : (phoneLinkError ?? this.phoneLinkError),
+      requiresPhoneVerification:
+          requiresPhoneVerification ?? this.requiresPhoneVerification,
       summaries: summaries ?? this.summaries,
       linkRequests: linkRequests ?? this.linkRequests,
       pendingEntries: pendingEntries ?? this.pendingEntries,
@@ -62,13 +77,72 @@ class CustomerHomeState {
 
 class CustomerController extends StateNotifier<CustomerHomeState> {
   int _loadVersion = 0;
+  int _activeLoads = 0;
+  DateTime? _lastSuccessfulLoadAt;
   final _cache = CustomerCache();
   final CustomerRepository _repository;
+  final DateTime Function() _now;
 
-  CustomerController(this._repository) : super(const CustomerHomeState());
+  CustomerController(this._repository, {DateTime Function()? now})
+    : _now = now ?? DateTime.now,
+      super(const CustomerHomeState());
+
+  Future<void> restoreLocal() async {
+    final owner = _repository.userId;
+    if (!mounted || owner == null) return;
+    try {
+      final saved = await _cache.read(owner, 'home');
+      final outbox = await _repository.pendingActions();
+      if (!mounted || _repository.userId != owner || saved == null) return;
+      final updated = saved['updated_at'] as String?;
+      if (updated == null ||
+          (state.updatedAt != null &&
+              DateTime.parse(
+                updated,
+              ).isBefore(DateTime.parse(state.updatedAt!)))) {
+        return;
+      }
+      state = state.copyWith(
+        isLoading: false,
+        updatedAt: updated,
+        customerId: saved['customer_id'] as String?,
+        clearCustomerId: saved['customer_id'] == null,
+        hasCustomerAccount: saved['customer_id'] != null,
+        outbox: outbox,
+        summaries: (saved['summaries'] as List)
+            .map(
+              (e) =>
+                  CustomerBusinessSummary.fromMap(Map<String, dynamic>.from(e)),
+            )
+            .toList(),
+        linkRequests: (saved['requests'] as List)
+            .map(
+              (e) => CustomerLinkRequestModel.fromMap(
+                Map<String, dynamic>.from(e),
+              ),
+            )
+            .toList(),
+        pendingEntries: (saved['entries'] as List)
+            .map(
+              (e) => CustomerPendingEntry.fromMap(Map<String, dynamic>.from(e)),
+            )
+            .toList(),
+      );
+    } catch (_) {
+      /* The next synchronization repairs an invalid projection. */
+    }
+  }
 
   void refreshIfIdle({bool onlyPending = false}) {
-    if (!mounted || state.isLoading) return;
+    if (!mounted || _activeLoads > 0) return;
+    final phoneLinkNeedsRetry =
+        state.phoneLinkError != null || state.requiresPhoneVerification;
+    final last = _lastSuccessfulLoadAt;
+    if (!phoneLinkNeedsRetry &&
+        last != null &&
+        _now().difference(last) < const Duration(seconds: 45)) {
+      return;
+    }
     if (onlyPending && !state.outbox.any((e) => e['status'] == 'pending')) {
       return;
     }
@@ -76,24 +150,40 @@ class CustomerController extends StateNotifier<CustomerHomeState> {
   }
 
   /// تحميل كل بيانات الشاشة من الخادم (الملخص + طلبات الربط + القيود المعلقة)
-  Future<void> load() async {
+  Future<void> load({bool force = false}) async {
+    if (!mounted || (_activeLoads > 0 && !force)) return;
+    if (!force &&
+        state.phoneLinkError == null &&
+        !state.requiresPhoneVerification &&
+        _lastSuccessfulLoadAt != null &&
+        _now().difference(_lastSuccessfulLoadAt!) <
+            const Duration(seconds: 45)) {
+      return;
+    }
     final version = ++_loadVersion;
     final owner = _repository.userId;
     if (owner == null) {
       state = const CustomerHomeState(hasCustomerAccount: false);
       return;
     }
+    _activeLoads++;
     bool current() =>
         mounted && version == _loadVersion && _repository.userId == owner;
-    state = state.copyWith(isLoading: true, clearError: true);
+    // Keep visible data on screen during background refresh; only initial loads
+    // need the full-screen loading state.
+    final hasVisibleData =
+        state.updatedAt != null ||
+        state.summaries.isNotEmpty ||
+        state.customerId != null;
+    state = state.copyWith(isLoading: !hasVisibleData, clearError: true);
 
     try {
       try {
         final saved = await _cache.read(owner, 'home');
         if (!current()) return;
-        if (saved != null) {
+        if (saved != null && !hasVisibleData) {
           state = CustomerHomeState(
-            isLoading: true,
+            isLoading: false,
             isCached: true,
             updatedAt: saved['updated_at'] as String?,
             customerId: saved['customer_id'] as String?,
@@ -127,64 +217,51 @@ class CustomerController extends StateNotifier<CustomerHomeState> {
       final queued = await _repository.pendingActions();
       if (!current()) return;
       state = state.copyWith(outbox: queued);
-      await _repository.flushOutbox();
-      final remaining = await _repository.pendingActions();
-      if (!current()) return;
-      state = state.copyWith(outbox: remaining);
-      final customerId = await _repository.resolveCustomerId();
-      if (!current()) return;
-      if (customerId == null) {
-        state = CustomerHomeState(
-          outbox: state.outbox,
-          isLoading: false,
-          hasCustomerAccount: false,
-          customerId: null,
-          summaries: [],
-          linkRequests: [],
-          pendingEntries: [],
-        );
-        try {
-          await _cache.write(owner, 'home', {
-            'customer_id': null,
-            'updated_at': DateTime.now().toUtc().toIso8601String(),
-            'summaries': [],
-            'requests': [],
-            'entries': [],
-          });
-        } catch (_) {
-          /* Do not turn a successful empty response into an error. */
-        }
-        return;
-      }
-
-      final results = await Future.wait([
-        _repository.fetchBusinessSummaries(customerId),
-        _repository.fetchPendingLinkRequests(customerId),
-        _repository.fetchPendingEntries(customerId),
+      // Reads do not depend on phone linking or delivery of queued commands.
+      // Publish the first authorized snapshot while those requests are in flight.
+      final maintenance = Future.wait<bool>([
+        () async {
+          if (!queued.any((e) => e['status'] == 'pending')) return false;
+          try {
+            await _repository.flushOutbox();
+            if (!current()) return false;
+            final remaining = await _repository.pendingActions();
+            if (current()) state = state.copyWith(outbox: remaining);
+            return true;
+          } catch (_) {
+            return false;
+          }
+        }(),
+        () async {
+          String? phoneLinkError;
+          var requiresPhoneVerification = false;
+          try {
+            await _repository.refreshPhoneLinks();
+          } catch (e) {
+            requiresPhoneVerification = e is CustomerPhoneVerificationRequired;
+            phoneLinkError = e
+                .toString()
+                .replaceFirst('Exception: ', '')
+                .replaceFirst('Bad state: ', '');
+          }
+          if (!current()) return false;
+          state = state.copyWith(
+            phoneLinkError: phoneLinkError,
+            clearPhoneLinkError: phoneLinkError == null,
+            requiresPhoneVerification: requiresPhoneVerification,
+          );
+          return phoneLinkError == null;
+        }(),
       ]);
+      final firstSnapshot = await _repository.fetchHomeSnapshot();
       if (!current()) return;
-
-      state = state.copyWith(
-        isCached: false,
-        updatedAt: DateTime.now().toUtc().toIso8601String(),
-        isLoading: false,
-        hasCustomerAccount: true,
-        customerId: customerId,
-        summaries: results[0] as List<CustomerBusinessSummary>,
-        linkRequests: results[1] as List<CustomerLinkRequestModel>,
-        pendingEntries: results[2] as List<CustomerPendingEntry>,
-      );
-      try {
-        await _cache.write(owner, 'home', {
-          'customer_id': customerId,
-          'updated_at': state.updatedAt,
-          'summaries': state.summaries.map((e) => e.toMap()).toList(),
-          'requests': state.linkRequests.map((e) => e.toMap()).toList(),
-          'entries': state.pendingEntries.map((e) => e.toMap()).toList(),
-        });
-      } catch (_) {
-        /* Online data remains usable when local storage is unavailable. */
-      }
+      await _showSnapshot(owner, firstSnapshot);
+      final changed = await maintenance;
+      if (!current() || !changed.any((value) => value)) return;
+      // A successful claim/command may have changed relationships or entries.
+      final snapshot = await _repository.fetchHomeSnapshot();
+      if (!current()) return;
+      await _showSnapshot(owner, snapshot);
     } catch (e) {
       if (!current()) return;
       state = state.copyWith(
@@ -192,6 +269,33 @@ class CustomerController extends StateNotifier<CustomerHomeState> {
         isCached: state.updatedAt != null,
         errorMessage: e.toString().replaceFirst('Exception: ', ''),
       );
+    } finally {
+      _activeLoads--;
+    }
+  }
+
+  Future<void> _showSnapshot(
+    String owner,
+    CustomerReadSnapshot snapshot,
+  ) async {
+    _lastSuccessfulLoadAt = _now();
+    state = state.copyWith(
+      isCached: false,
+      updatedAt: snapshot.updatedAt,
+      isLoading: false,
+      hasCustomerAccount: snapshot.customerId != null,
+      customerId: snapshot.customerId,
+      clearCustomerId: snapshot.customerId == null,
+      summaries: snapshot.summaries,
+      linkRequests: snapshot.requests,
+      pendingEntries: snapshot.entries
+          .map(CustomerPendingEntry.fromMap)
+          .toList(),
+    );
+    try {
+      await _repository.local.saveHome(owner, snapshot);
+    } catch (_) {
+      /* The next synchronization retries persistence. */
     }
   }
 
@@ -204,7 +308,10 @@ class CustomerController extends StateNotifier<CustomerHomeState> {
         accept: accept,
       );
       if (!mounted || owner != _repository.userId) return false;
-      await load();
+      final pending = await _repository.pendingActions();
+      if (!mounted || owner != _repository.userId) return false;
+      state = state.copyWith(outbox: pending);
+      unawaited(load(force: true));
       return true;
     } catch (e) {
       if (!mounted || owner != _repository.userId) return false;
@@ -222,7 +329,10 @@ class CustomerController extends StateNotifier<CustomerHomeState> {
       await _repository.confirmEntry(entryId);
       if (!mounted || owner != _repository.userId) return false;
       // Keep the entry visible until the server confirms the queued request.
-      await load();
+      final pending = await _repository.pendingActions();
+      if (!mounted || owner != _repository.userId) return false;
+      state = state.copyWith(outbox: pending);
+      unawaited(load(force: true));
       return true;
     } catch (e) {
       if (!mounted || owner != _repository.userId) return false;
@@ -246,7 +356,10 @@ class CustomerController extends StateNotifier<CustomerHomeState> {
         description: description,
       );
       if (!mounted || owner != _repository.userId) return false;
-      await load();
+      final pending = await _repository.pendingActions();
+      if (!mounted || owner != _repository.userId) return false;
+      state = state.copyWith(outbox: pending);
+      unawaited(load(force: true));
       return true;
     } catch (e) {
       if (!mounted || owner != _repository.userId) return false;
@@ -267,12 +380,19 @@ final customerRepositoryProvider = Provider<CustomerRepository>((ref) {
 });
 
 final customerControllerProvider =
-    StateNotifierProvider<CustomerController, CustomerHomeState>((ref) {
+    StateNotifierProvider.autoDispose<CustomerController, CustomerHomeState>((
+      ref,
+    ) {
       ref.watch(authControllerProvider.select((auth) => auth.userId));
       final repo = ref.watch(customerRepositoryProvider);
       final controller = CustomerController(repo);
-      final timer = Timer.periodic(const Duration(seconds: 30), (_) {
-        controller.refreshIfIdle(onlyPending: true);
+      void localChanged() => unawaited(controller.restoreLocal());
+      CustomerLocalStore.changes.addListener(localChanged);
+      final timer = Timer.periodic(const Duration(minutes: 2), (_) {
+        final lifecycle = WidgetsBinding.instance.lifecycleState;
+        if (lifecycle == null || lifecycle == AppLifecycleState.resumed) {
+          controller.refreshIfIdle();
+        }
       });
       final connectivity = Connectivity().onConnectivityChanged.listen((
         results,
@@ -282,6 +402,7 @@ final customerControllerProvider =
         }
       });
       ref.onDispose(() {
+        CustomerLocalStore.changes.removeListener(localChanged);
         timer.cancel();
         connectivity.cancel();
       });

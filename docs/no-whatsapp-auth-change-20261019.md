@@ -1,0 +1,14 @@
+﻿# Disable WhatsApp OTP for staging sign-up — 2026-10-19
+
+The staging app is configured with `PHONE_VERIFICATION_ENABLED=false`. New account registration therefore uses the rate-limited `phone-password-signup` Edge Function and creates a normal phone/password session without calling `send-whatsapp-otp`. Existing password login is unchanged. The password-signup function is active on staging project `sgnbtrcbllnffcyzsjei`, and its `ALLOW_PHONE_PASSWORD_SIGNUP` server flag is configured.
+
+A phone number on this path is not proof of ownership. Such accounts remain marked `phone_verification_bypassed`. Automatic phone claiming stays blocked by default; the isolated staging-only test override described below permits testing the existing link-request flow without asserting that the phone is verified. Password recovery by phone OTP is also unavailable while WhatsApp verification is disabled. The in-app ledger sharing action that opens WhatsApp is separate and unaffected.
+
+A fresh staging debug APK was built at `mobile/build/app/outputs/flutter-apk/app-debug.apk` with SHA-256 `C523E9313BED9DB50E141B53D917D4541A36F07B121CBFE6F944455B93726A3A`. No real account was created and no WhatsApp message was sent during deployment.
+
+Follow-up for the reported Android log: the `429` came from the old OTP endpoint's per-phone/IP rate limiter after repeated requests; the following `503` indicated that the WhatsApp delivery gateway was not configured. The server now has an explicit fail-closed `WHATSAPP_OTP_ENABLED=false` guard before rate limiting and challenge creation. A live request to the staging function returned `503 otp_delivery_disabled`; this check does not create a challenge or send a message. The app must be updated to the APK above to use password registration instead of calling the legacy OTP flow.
+
+Staging account-link test mode — 2026-10-19: the staging app build now sets `ALLOW_STAGING_UNVERIFIED_PHONE_LINKS=true`, and the staging Edge Function has the matching server flag plus `APP_ENV=staging`. This permits a bypass-marked phone account to invoke the existing phone-claim transaction only in staging; the server then creates a pending link request for the customer to accept. The Edge Function rejects this bypass unless both staging conditions match. Production builds default the client flag off, and the production server must keep the staging flag disabled. WhatsApp OTP remains disabled.
+
+APK rebuilt for the link test: `mobile/build/app/outputs/flutter-apk/app-debug.apk`; SHA-256 `1A53AA76E647316E9FD032473DFA2ABFA6D9DE21F133415EB0A93974A9BB03CB`. Cloud deployment of `bootstrap-user-contact` is active. Focused Flutter tests pass with staging linking enabled and with the default disabled; the Edge Function test verifies a bypassed account is blocked in production mode. Existing customer-account linking runs when the updated app opens the customer account; the customer then accepts the pending shop link in the app.
+

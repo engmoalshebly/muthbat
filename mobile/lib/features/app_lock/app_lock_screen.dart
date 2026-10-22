@@ -88,59 +88,62 @@ class _AppLockScreenState extends State<AppLockScreen> {
           color: AppColors.primaryDark,
           child: SafeArea(
             child: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.lock_outline_rounded,
-                      color: Colors.white,
-                      size: 44,
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'أدخل رمز القفل',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.lock_outline_rounded,
+                        color: AppColors.white,
+                        size: 44,
                       ),
-                    ),
-                    const SizedBox(height: 24),
-                    Opacity(
-                      opacity: _checking ? 0.5 : 1,
-                      child: IgnorePointer(
-                        ignoring: _checking,
-                        child: PinCodeFields(
-                          key: _pinKey,
-                          length: 6,
-                          onCompleted: _submitPin,
-                        ),
-                      ),
-                    ),
-                    if (_error != null) ...[
                       const SizedBox(height: 16),
-                      Text(
-                        _error!,
-                        style: const TextStyle(color: Colors.redAccent),
+                      const Text(
+                        'أدخل رمز القفل',
+                        style: TextStyle(
+                          color: AppColors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ],
-                    if (_showBiometricButton) ...[
                       const SizedBox(height: 24),
-                      TextButton.icon(
-                        onPressed: () => _tryBiometric(),
-                        icon: const Icon(
-                          Icons.fingerprint,
-                          color: Colors.white,
-                        ),
-                        label: const Text(
-                          'استخدام البصمة',
-                          style: TextStyle(color: Colors.white),
+                      Opacity(
+                        opacity: _checking ? 0.5 : 1,
+                        child: IgnorePointer(
+                          ignoring: _checking,
+                          child: PinCodeFields(
+                            key: _pinKey,
+                            obscureText: true,
+                            length: 6,
+                            onCompleted: _submitPin,
+                          ),
                         ),
                       ),
+                      if (_error != null) ...[
+                        const SizedBox(height: 16),
+                        Text(
+                          _error!,
+                          style: const TextStyle(color: AppColors.redAccent),
+                        ),
+                      ],
+                      if (_showBiometricButton) ...[
+                        const SizedBox(height: 24),
+                        TextButton.icon(
+                          onPressed: () => _tryBiometric(),
+                          icon: const Icon(
+                            Icons.fingerprint,
+                            color: AppColors.white,
+                          ),
+                          label: const Text(
+                            'استخدام البصمة',
+                            style: TextStyle(color: AppColors.white),
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),

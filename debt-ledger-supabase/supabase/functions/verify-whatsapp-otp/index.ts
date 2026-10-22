@@ -88,9 +88,13 @@ Deno.serve(async (request: Request) => {
     } else {
       if (!existingUserId) return errorResponse(request, 400, "recovery_unavailable", "Account recovery is unavailable for this phone number.");
 
+      const { data: existing, error: existingError } = await admin.auth.admin.getUserById(existingUserId);
+      if (existingError || !existing.user) throw existingError ?? new Error("account_unavailable");
       const { error } = await admin.auth.admin.updateUserById(existingUserId, {
         password: input.password,
         phone_confirm: true,
+        // Only the successfully consumed server OTP can upgrade a bypassed account.
+        app_metadata: { ...existing.user.app_metadata, phone_verification_bypassed: false },
       });
       if (error) throw error;
 

@@ -39,6 +39,13 @@ class MerchantApiException implements Exception {
   /// تحويل أي خطأ من Supabase/الشبكة إلى [MerchantApiException] غني.
   factory MerchantApiException.from(Object error) {
     if (error is MerchantApiException) return error;
+    if (error is AuthException) {
+      return MerchantApiException(
+        code: 'unauthenticated',
+        message: error.message,
+        cause: error,
+      );
+    }
 
     if (error is PostgrestException) {
       final code = error.code ?? '';

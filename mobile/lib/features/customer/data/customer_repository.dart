@@ -3,22 +3,82 @@ import 'dart:convert';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'models/customer_summary_model.dart';
 import 'customer_outbox.dart';
+import 'customer_local_store.dart';
 import '../../../core/database/app_database.dart';
+import '../../../core/config/env.dart';
+import '../../../core/security/cloud_session.dart';
+import '../../../core/sync/user_contact_bootstrap.dart';
 
 /// طبقة بيانات شاشة العميل — قراءة مباشرة من عروض Supabase العامة المحمية بـ RLS
 /// (`customer_business_summary`, `customer_link_requests`, `ledger_timeline`)
 /// وأوامر العميل العامة (`respond_link_request`, `confirm_ledger_entry`).
 ///
 /// ممنوع الابتلاع الصامت للأخطاء: كل فشل يُرمى برسالة عربية واضحة تعرضها الواجهة.
+class CustomerPhoneVerificationRequired implements Exception {
+  const CustomerPhoneVerificationRequired();
+  @override
+  String toString() =>
+      'وثّق ملكية رقمك عبر استعادة الحساب برمز التحقق لإظهار حساباتك لدى البقالات.';
+}
+
+class CustomerReadSnapshot {
+  const CustomerReadSnapshot({
+    required this.customerId,
+    required this.updatedAt,
+    required this.summaries,
+    required this.requests,
+    required this.entries,
+  });
+  final String? customerId;
+  final String updatedAt;
+  final List<CustomerBusinessSummary> summaries;
+  final List<CustomerLinkRequestModel> requests;
+  final List<Map<String, dynamic>> entries;
+}
+
 class CustomerRepository {
+  CustomerRepository({SupabaseClient? client}) : _injectedClient = client;
+  final SupabaseClient? _injectedClient;
   final _outbox = CustomerOutbox();
   bool _flushing = false;
+  final local = CustomerLocalStore();
+
+  /// Sync all relationships sequentially; navigation never waits for this.
+  Future<void> syncLocalLedgers(CustomerReadSnapshot home) async {
+    final owner = userId;
+    if (owner == null) return;
+    await local.saveHome(owner, home);
+    for (final summary in home.summaries) {
+      if (userId != owner) return;
+      // Each completed ledger is atomic. Refresh on every new home generation,
+      // including confirmations/dispute changes that don't change entry counts.
+      final snapshot = await fetchCompleteLedger(
+        businessCustomerId: summary.businessCustomerId,
+        currency: summary.currencyCode,
+      );
+      if (userId != owner) return;
+      await local.saveLedger(
+        owner,
+        snapshot,
+        relationship: summary.businessCustomerId,
+        currency: summary.currencyCode,
+      );
+    }
+  }
 
   Future<List<Map<String, dynamic>>> pendingActions() async =>
       userId == null ? [] : _outbox.list(userId!);
 
   Future<void> retryAction(String id) async {
     if (userId != null) await _outbox.retry(userId!, id);
+  }
+
+  Future<void> replyToDispute(String id, String message) async {
+    final text = message.trim();
+    if (text.isEmpty || text.length > 4000) {
+      throw ArgumentError('اكتب رسالة بين 1 و4000 حرف');
+    }
+    await _enqueue({'kind': 'dispute_reply', 'target_id': id, 'message': text});
   }
 
   Future<void> flushOutbox() async {
@@ -33,8 +93,10 @@ class CustomerRepository {
     _flushing = true;
     try {
       final pending = await _outbox.list(owner);
+      final elapsed = Stopwatch()..start();
       for (final action
-          in pending.where((e) => e['status'] == 'pending').take(1)) {
+          in pending.where((e) => e['status'] == 'pending').take(50)) {
+        if (elapsed.elapsed >= const Duration(seconds: 20)) return;
         if (userId != owner) return;
         try {
           final result = await _client
@@ -54,8 +116,16 @@ class CustomerRepository {
         } on PostgrestException catch (e) {
           // Missing deployment, rate limits and auth errors remain retryable.
           if (userId != owner) return;
-          if (['P0001', '22023', '22P02', '23505', '42501'].contains(e.code)) {
+          if ([
+            'P0001',
+            '22023',
+            '22P02',
+            '23505',
+            '42501',
+            '55000',
+          ].contains(e.code)) {
             await _outbox.fail(owner, action['id'] as String, friendlyError(e));
+            continue;
           }
           return;
         } catch (_) {
@@ -73,12 +143,139 @@ class CustomerRepository {
     await _outbox.enqueue(owner, payload);
   }
 
-  String? get userId =>
-      _client.auth.currentUser?.id ?? AppDatabase.instance.accountId;
+  String? get userId => AppDatabase.instance.accountId;
+
+  Future<CustomerReadSnapshot> fetchHomeSnapshot() => _fetchSnapshot('home');
+  Future<CustomerReadSnapshot> fetchCompleteLedger({
+    required String businessCustomerId,
+    required String currency,
+  }) => _fetchSnapshot(
+    'ledger',
+    businessCustomerId: businessCustomerId,
+    currency: currency,
+  );
+
+  Future<CustomerReadSnapshot> _fetchSnapshot(
+    String scope, {
+    String? businessCustomerId,
+    String? currency,
+  }) async {
+    _requireOnlineSession();
+    final owner = userId;
+    String? snapshotId;
+    void checkAccount() {
+      if (owner != userId) throw StateError('تغير الحساب أثناء تحميل البيانات');
+      _requireOnlineSession();
+    }
+
+    try {
+      final result = await _client
+          .rpc(
+            'begin_customer_read_snapshot',
+            params: {
+              'p_scope': scope,
+              'p_business_customer_id': businessCustomerId,
+              'p_currency_code': currency,
+            },
+          )
+          .timeout(const Duration(seconds: 30));
+      checkAccount();
+      if (result is! Map ||
+          result['snapshot_id'] is! String ||
+          result['item_count'] is! num) {
+        throw StateError('استجابة لقطة الحساب غير مكتملة');
+      }
+      snapshotId = result['snapshot_id'] as String;
+      final count = (result['item_count'] as num).toInt();
+      final items = <Map<String, dynamic>>[];
+      var after = 0;
+      while (items.length < count) {
+        final response = await _client
+            .rpc(
+              'read_customer_read_snapshot',
+              params: {
+                'p_snapshot_id': snapshotId,
+                'p_after': after,
+                'p_limit': 250,
+              },
+            )
+            .timeout(const Duration(seconds: 30));
+        checkAccount();
+        final page = List<Map<String, dynamic>>.from(response as List);
+        if (page.isEmpty) {
+          throw StateError('لم يكتمل تحميل الحساب. أعد المحاولة');
+        }
+        for (final item in page) {
+          final ordinal = (item['ordinal'] as num).toInt();
+          if (ordinal != after + 1) {
+            throw StateError('ترتيب صفحات الحساب غير مكتمل');
+          }
+          after = ordinal;
+          items.add(item);
+        }
+        if (items.length > count) {
+          throw StateError('عدد عناصر الحساب غير متطابق');
+        }
+      }
+      final metadata = Map<String, dynamic>.from(
+        items.singleWhere((e) => e['kind'] == 'metadata')['payload'] as Map,
+      );
+      final summaries = items
+          .where((e) => e['kind'] == 'summary')
+          .map(
+            (e) => CustomerBusinessSummary.fromMap(
+              Map<String, dynamic>.from(e['payload'] as Map),
+            ),
+          )
+          .toList();
+      final entries = items
+          .where((e) => e['kind'] == 'entry')
+          .map((e) => Map<String, dynamic>.from(e['payload'] as Map))
+          .toList();
+      entries.sort((a, b) {
+        final order = DateTime.parse(
+          b['occurred_at'] as String,
+        ).compareTo(DateTime.parse(a['occurred_at'] as String));
+        return order != 0
+            ? order
+            : (b['id'] as String).compareTo(a['id'] as String);
+      });
+      return CustomerReadSnapshot(
+        customerId: metadata['customer_id'] as String?,
+        updatedAt: metadata['updated_at'] as String,
+        summaries: summaries,
+        requests: items
+            .where((e) => e['kind'] == 'request')
+            .map(
+              (e) => CustomerLinkRequestModel.fromMap(
+                Map<String, dynamic>.from(e['payload'] as Map),
+              ),
+            )
+            .toList(),
+        entries: entries,
+      );
+    } finally {
+      if (snapshotId != null && owner == userId) {
+        // Cleanup is disposable and must not delay a completed financial read.
+        unawaited(() async {
+          try {
+            await _client
+                .rpc(
+                  'release_customer_read_snapshot',
+                  params: {'p_snapshot_id': snapshotId},
+                )
+                .timeout(const Duration(seconds: 5));
+          } catch (_) {
+            /* Expiry job removes abandoned snapshots. */
+          }
+        }());
+      }
+    }
+  }
 
   void _requireOnlineSession() {
     final session = _client.auth.currentSession;
-    if (session == null || session.isExpired || session.user.id != userId) {
+    if (!canUseCloudSession(session, userId)) {
       throw StateError(
         'بياناتك المحفوظة متاحة. اتصل بالإنترنت وسجّل الدخول لاستكمال التحديث أو إرسال العمليات.',
       );
@@ -87,15 +284,22 @@ class CustomerRepository {
 
   Future<void> refreshPhoneLinks() async {
     _requireOnlineSession();
+    final user = _client.auth.currentUser;
+    if ((user?.appMetadata['phone_verification_bypassed'] == true &&
+            !EnvConfig.allowStagingUnverifiedPhoneLinks) ||
+        user?.phoneConfirmedAt == null) {
+      throw const CustomerPhoneVerificationRequired();
+    }
     try {
-      await _client.functions
-          .invoke('bootstrap-user-contact')
-          .timeout(const Duration(seconds: 15));
+      final response = await bootstrapUserContact(_client);
+      if (response.data is! Map || response.data['customerId'] is! String) {
+        throw StateError(
+          'لم يؤكد الخادم ربط رقم الهاتف. ستتم إعادة المحاولة تلقائيًا.',
+        );
+      }
     } on FunctionException catch (e) {
       if (e.status == 403 || e.status == 422) {
-        throw Exception(
-          'يلزم التحقق الفعلي من ملكية رقم الهاتف. حساب الاختبار دون رمز تحقق لا يربط سجلات البقالات.',
-        );
+        throw const CustomerPhoneVerificationRequired();
       }
       if (e.status == 409) {
         throw Exception(
@@ -127,10 +331,23 @@ class CustomerRepository {
     return List<Map<String, dynamic>>.from(result);
   }
 
-  SupabaseClient get _client => Supabase.instance.client;
+  SupabaseClient get _client => _injectedClient ?? Supabase.instance.client;
 
   /// ترجمة أخطاء PostgREST/الشبكة إلى رسائل عربية مفهومة للمستخدم
   String friendlyError(Object e) {
+    final raw = e.toString();
+    if (raw.contains('active dispute already exists')) {
+      return 'لديك طلب سابق لهذه العملية. افتح «طلباتي للتاجر» لمتابعته.';
+    }
+    if (raw.contains('Dispute is already resolved')) {
+      return 'تم إغلاق الاعتراض. حدّث الصفحة لعرض النتيجة؛ لم يُرسل الرد.';
+    }
+    if (raw.contains('Cannot dispute a reversed entry')) {
+      return 'تم تصحيح هذه العملية وعكس أثرها. حدّث الكشف لمراجعة القيد التصحيحي.';
+    }
+    if (raw.contains('Not authorized or entry unavailable')) {
+      return 'تغير ارتباط الحساب أو لم تعد العملية متاحة. حدّث بياناتك قبل إعادة المحاولة.';
+    }
     if (e is TimeoutException) {
       return 'انتهت مهلة الاتصال. حدّث البيانات للتحقق من النتيجة قبل إعادة العملية.';
     }
@@ -181,77 +398,15 @@ class CustomerRepository {
   /// RLS على العرض تضمن أن العميل يرى روابطه `linked` فقط.
   Future<List<CustomerBusinessSummary>> fetchBusinessSummaries(
     String customerId,
-  ) async {
-    _requireOnlineSession();
-    try {
-      final res = await _client
-          .from('customer_business_summary')
-          .select(
-            'business_customer_id, business_id, business_name, business_type, '
-            'currency_code, current_balance, entry_count, last_entry_at',
-          )
-          .eq('customer_id', customerId)
-          .timeout(const Duration(seconds: 15));
-      return (res as List)
-          .map(
-            (row) =>
-                CustomerBusinessSummary.fromMap(row as Map<String, dynamic>),
-          )
-          .toList();
-    } catch (e) {
-      throw Exception(friendlyError(e));
-    }
-  }
-
-  /// طلبات الربط المعلقة الموجهة لهذا العميل مع اسم المحل ومدينته.
+  ) async => (await fetchHomeSnapshot()).summaries;
   Future<List<CustomerLinkRequestModel>> fetchPendingLinkRequests(
     String customerId,
-  ) async {
-    _requireOnlineSession();
-    try {
-      final res = await _client
-          .rpc('customer_pending_link_requests')
-          .timeout(const Duration(seconds: 15));
-      return (res as List)
-          .map(
-            (row) =>
-                CustomerLinkRequestModel.fromMap(row as Map<String, dynamic>),
-          )
-          .toList();
-    } catch (e) {
-      throw Exception(friendlyError(e));
-    }
-  }
-
-  /// القيود المالية بانتظار تأكيد العميل (من عرض ledger_timeline).
+  ) async => (await fetchHomeSnapshot()).requests;
   Future<List<CustomerPendingEntry>> fetchPendingEntries(
     String customerId,
-  ) async {
-    _requireOnlineSession();
-    try {
-      final res = await _client
-          .from('ledger_timeline')
-          .select(
-            'id, business_customer_id, entry_type, direction, amount, '
-            'currency_code, description, occurred_at',
-          )
-          .eq('customer_id', customerId)
-          .eq('confirmation_status', 'pending')
-          .eq('is_reversed', false)
-          .eq('dispute_status', 'none')
-          .order('occurred_at', ascending: false)
-          .timeout(const Duration(seconds: 15));
-      return (res as List)
-          .map(
-            (row) => CustomerPendingEntry.fromMap(row as Map<String, dynamic>),
-          )
-          .toList();
-    } catch (e) {
-      throw Exception(friendlyError(e));
-    }
-  }
-
-  /// الرد على طلب ربط (قبول/رفض) عبر الأمر العام respond_link_request.
+  ) async => (await fetchHomeSnapshot()).entries
+      .map(CustomerPendingEntry.fromMap)
+      .toList();
   Future<void> respondLinkRequest({
     required String requestId,
     required bool accept,

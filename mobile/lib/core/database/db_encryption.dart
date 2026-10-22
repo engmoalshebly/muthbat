@@ -25,6 +25,19 @@ class DbEncryptionKeyStore {
     return generated;
   }
 
+  /// Carries the existing SQLCipher key when moving a database to a new
+  /// environment-scoped filename. The database contents remain encrypted with
+  /// the same random key; no plaintext export is created.
+  Future<bool> copyPassphrase({
+    required String sourceFileName,
+    required String targetFileName,
+  }) async {
+    final source = await _storage.read(key: '$_keyPrefix$sourceFileName');
+    if (source == null || source.isEmpty) return false;
+    await _storage.write(key: '$_keyPrefix$targetFileName', value: source);
+    return await _storage.read(key: '$_keyPrefix$targetFileName') == source;
+  }
+
   String _generatePassphrase() {
     final random = Random.secure();
     final bytes = List<int>.generate(32, (_) => random.nextInt(256));

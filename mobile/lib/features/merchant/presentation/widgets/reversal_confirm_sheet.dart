@@ -48,6 +48,7 @@ class _ReversalConfirmSheetState extends ConsumerState<ReversalConfirmSheet> {
           originalEntryType: widget.entry.entryType,
           originalDirection: widget.entry.direction,
           originalAmount: widget.entry.amount,
+          currencyCode: widget.entry.currencyCode,
           reason: _reasonController.text.trim(),
         );
 
@@ -58,7 +59,7 @@ class _ReversalConfirmSheetState extends ConsumerState<ReversalConfirmSheet> {
         TopNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'تم عكس القيد بمبلغ ${NumberFormat('#,##0.##').format(widget.entry.amount)} ${ref.read(merchantControllerProvider).currency}',
+              'تم عكس القيد بمبلغ ${NumberFormat('#,##0.##').format(widget.entry.amount)} ${widget.entry.currencyCode}',
             ),
             backgroundColor: AppColors.warning,
             behavior: SnackBarBehavior.floating,
@@ -89,7 +90,7 @@ class _ReversalConfirmSheetState extends ConsumerState<ReversalConfirmSheet> {
         bottom: MediaQuery.of(context).viewInsets.bottom + 24,
       ),
       decoration: const BoxDecoration(
-        color: Colors.white,
+        color: AppColors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       child: Form(

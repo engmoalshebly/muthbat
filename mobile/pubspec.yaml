@@ -16,8 +16,9 @@ dependencies:
   flutter_riverpod: ^2.6.1
 
   # Backend & Network
-  supabase_flutter: ^2.8.3
+  supabase_flutter: ^2.18.3
   http: ^1.2.2
+  http_parser: ^4.1.2
 
   # UI, Typography & Animations
   google_fonts: ^6.2.1
@@ -49,22 +50,50 @@ dependencies:
   pdf: ^3.12.0
   file_picker: ^12.2.0
   workmanager: ^0.10.10
+  printing: ^5.14.3
+  firebase_core: ^5.0.0
+  firebase_messaging: ^17.0.0
+  flutter_local_notifications: 22.3.2
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
   sqflite_common_ffi: ^2.4.0+3
+  integration_test:
+    sdk: flutter
 
 flutter:
   uses-material-design: true
   fonts:
-    - family: Tajawal
+    - family: ZaridSlab
       fonts:
-        - asset: assets/fonts/Tajawal-Regular.ttf
+        - asset: assets/fonts/29LTZaridSlab-ExtraLight.ttf
+          weight: 200
+        - asset: assets/fonts/29LTZaridSlab-Light.ttf
+          weight: 300
+        - asset: assets/fonts/29LTZaridSlab-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/29LTZaridSlab-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/29LTZaridSlab-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/29LTZaridSlab-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/29LTZaridSlab-Black.ttf
+          weight: 900
 
   assets:
     - assets/fonts/
-    - assets/logos/
+    - assets/logos/brand_app_icon.png
+    - assets/logos/brand_horizontal_ar.png
+    - assets/logos/brand_horizontal_monochrome.png
+    - assets/logos/brand_horizontal_white.png
+    - assets/logos/brand_mark.png
+    - assets/logos/brand_mark_monochrome.png
+    - assets/logos/brand_mark_spacious.png
+    - assets/logos/brand_mark_white.png
+    - assets/logos/brand_vertical_ar.png
+    - assets/logos/brand_vertical_white.png
     - assets/icons/
     - assets/images/

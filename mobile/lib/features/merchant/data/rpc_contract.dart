@@ -28,9 +28,6 @@ class RpcContract {
   static const String openDispute = 'open_dispute';
   static const String addDisputeMessage = 'add_dispute_message';
   static const String resolveDispute = 'resolve_dispute';
-  static const String inviteBusinessMember = 'invite_business_member';
-  static const String respondBusinessMemberInvite =
-      'respond_business_member_invite';
   static const String createStatement = 'create_statement';
   static const String requestCustomerLink = 'request_customer_link';
   static const String respondLinkRequest = 'respond_link_request';
@@ -39,7 +36,6 @@ class RpcContract {
 
   // ==================== Edge Functions ====================
   static const String edgeCustomerDirectory = 'customer-directory';
-  static const String edgeMemberInvite = 'member-invite';
 
   // ==================== أنواع أوامر طابور المزامنة ====================
   static const String cmdCreateBusiness = 'create_business';

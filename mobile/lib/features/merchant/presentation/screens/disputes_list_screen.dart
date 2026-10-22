@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+import '../../../../core/sync/sync_engine.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -18,18 +20,35 @@ class DisputesListScreen extends ConsumerStatefulWidget {
 class _DisputesListScreenState extends ConsumerState<DisputesListScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  StreamSubscription<SyncProgress>? _syncSubscription;
+
+  Future<void> _refresh() async {
+    await ref.read(merchantControllerProvider.notifier).loadDisputes();
+    await SyncEngine.instance.triggerSync();
+    if (mounted) {
+      await ref.read(merchantControllerProvider.notifier).loadDisputes();
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    Future.microtask(
-      () => ref.read(merchantControllerProvider.notifier).loadDisputes(),
-    );
+    _syncSubscription = SyncEngine.instance.progressStream.listen((progress) {
+      if (mounted &&
+          (progress.dataChanged ||
+              progress.state == SyncState.synced ||
+              progress.state == SyncState.error ||
+              progress.state == SyncState.idle)) {
+        ref.read(merchantControllerProvider.notifier).loadDisputes();
+      }
+    });
+    Future.microtask(_refresh);
   }
 
   @override
   void dispose() {
+    _syncSubscription?.cancel();
     _tabController.dispose();
     super.dispose();
   }
@@ -47,14 +66,14 @@ class _DisputesListScreenState extends ConsumerState<DisputesListScreen>
         elevation: 0,
         title: Text(
           'الاعتراضات والنزاعات',
-          style: AppTypography.titleMedium(color: Colors.white),
+          style: AppTypography.titleMedium(color: AppColors.white),
         ),
         bottom: TabBar(
           controller: _tabController,
           indicatorColor: AppColors.accentGold,
           indicatorWeight: 3,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white60,
+          labelColor: AppColors.white,
+          unselectedLabelColor: AppColors.white60,
           tabs: [
             Tab(
               child: Row(
@@ -78,7 +97,7 @@ class _DisputesListScreenState extends ConsumerState<DisputesListScreen>
                       child: Text(
                         '${openDisputes.length}',
                         style: const TextStyle(
-                          color: Colors.white,
+                          color: AppColors.white,
                           fontSize: 11,
                           fontWeight: FontWeight.bold,
                         ),
@@ -104,13 +123,13 @@ class _DisputesListScreenState extends ConsumerState<DisputesListScreen>
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.white24,
+                        color: AppColors.white24,
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text(
                         '${resolvedDisputes.length}',
                         style: const TextStyle(
-                          color: Colors.white,
+                          color: AppColors.white,
                           fontSize: 11,
                         ),
                       ),
@@ -123,8 +142,7 @@ class _DisputesListScreenState extends ConsumerState<DisputesListScreen>
         ),
       ),
       body: RefreshIndicator(
-        onRefresh: () =>
-            ref.read(merchantControllerProvider.notifier).loadDisputes(),
+        onRefresh: _refresh,
         color: AppColors.primary,
         child: TabBarView(
           controller: _tabController,
@@ -221,7 +239,7 @@ class _DisputesListScreenState extends ConsumerState<DisputesListScreen>
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppColors.white,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
               color: isAwaitingMerchant
@@ -237,7 +255,7 @@ class _DisputesListScreenState extends ConsumerState<DisputesListScreen>
             ],
           ),
           child: Material(
-            color: Colors.transparent,
+            color: AppColors.transparent,
             borderRadius: BorderRadius.circular(20),
             child: InkWell(
               borderRadius: BorderRadius.circular(20),

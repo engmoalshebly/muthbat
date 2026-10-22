@@ -1,3 +1,5 @@
+import '../../../../core/validation/customer_phone.dart';
+import '../../../../app/theme/app_icons.dart';
 import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
@@ -36,27 +38,19 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
     super.dispose();
   }
 
-  String _normalizePhoneForCompare(String raw) {
-    final trimmed = raw.trim();
-    var digits = AuthValidators.normalizeDigits(trimmed);
-    if (trimmed.startsWith('00') && digits.length > 2) {
-      digits = digits.substring(2);
-    }
-    if (trimmed.startsWith('+') || digits.startsWith('967')) {
-      return '+$digits';
-    }
-    if (digits.startsWith('0')) {
-      digits = digits.substring(1);
-    }
-    return '+967$digits';
-  }
-
   BusinessCustomerModel? _findLocalDuplicate(String rawPhone) {
-    final normalized = _normalizePhoneForCompare(rawPhone);
+    final normalized = normalizeCustomerPhone(rawPhone);
     final customers = ref.read(merchantControllerProvider).customers;
     for (final customer in customers) {
       final phone = customer.phone;
-      if (phone != null && _normalizePhoneForCompare(phone) == normalized) {
+      if (phone == null) continue;
+      String stored;
+      try {
+        stored = normalizeCustomerPhone(phone);
+      } on FormatException {
+        continue;
+      }
+      if (stored == normalized) {
         return customer;
       }
     }
@@ -122,6 +116,12 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
 
     final rawPhone = _phoneController.text.trim();
     if (rawPhone.isNotEmpty) {
+      try {
+        normalizeCustomerPhone(rawPhone);
+      } on FormatException {
+        setState(() => _phoneError = 'رقم الهاتف غير صالح أو غير مكتمل');
+        return;
+      }
       final existing = _findLocalDuplicate(rawPhone);
       if (existing != null) {
         setState(
@@ -194,9 +194,10 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
       isDense: true,
       labelText: label,
       hintText: hint,
-      prefixIcon: Icon(icon, color: AppColors.textSecondary, size: 21),
+      prefixIcon: Icon(icon, color: AppColors.textSecondary, size: 19),
       suffixIcon: suffixIcon,
-      filled: false,
+      filled: true,
+      fillColor: AppColors.backgroundLight,
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
@@ -229,7 +230,7 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
 
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 28),
-      backgroundColor: Colors.transparent,
+      backgroundColor: AppColors.transparent,
       elevation: 0,
       child: ConstrainedBox(
         constraints: BoxConstraints(
@@ -237,7 +238,7 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
           maxHeight: availableHeight * 0.86,
         ),
         child: Material(
-          color: Colors.white,
+          color: AppColors.white,
           borderRadius: BorderRadius.circular(24),
           clipBehavior: Clip.antiAlias,
           child: Form(
@@ -253,7 +254,7 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                       IconButton(
                         tooltip: 'إغلاق',
                         onPressed: () => Navigator.pop(context),
-                        icon: const Icon(Icons.close_rounded),
+                        icon: const Icon(AppIcons.close),
                         color: AppColors.textSecondary,
                       ),
                       Expanded(
@@ -277,21 +278,13 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(
-                        Icons.person_add_alt_1_rounded,
+                        AppIcons.customers,
                         color: AppColors.primary,
-                        size: 27,
+                        size: 22,
                       ),
                     ),
                   ),
-                  const SizedBox(height: 5),
-                  Text(
-                    'عميل جديد',
-                    textAlign: TextAlign.center,
-                    style: AppTypography.titleMedium(
-                      color: AppColors.textPrimary,
-                    ).copyWith(fontWeight: FontWeight.w800),
-                  ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 10),
                   Text(
                     'أدخل البيانات الأساسية لفتح الحساب',
                     textAlign: TextAlign.center,
@@ -306,11 +299,11 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                     decoration: _decoration(
                       label: 'اسم العميل *',
                       hint: 'مثال: محمد عبدالله',
-                      icon: Icons.person_outline_rounded,
+                      icon: AppIcons.singleCustomer,
                     ),
                     validator: (value) => AuthValidators.nameError(value ?? ''),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 14),
                   TextFormField(
                     controller: _phoneController,
                     keyboardType: TextInputType.phone,
@@ -321,9 +314,9 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                       }
                     },
                     decoration: _decoration(
-                      label: 'رقم الهاتف',
+                      label: 'رقم الهاتف *',
                       hint: '+967 7XX XXX XXX',
-                      icon: Icons.phone_outlined,
+                      icon: AppIcons.phone,
                       suffixIcon: IconButton(
                         tooltip: 'اختيار من جهات الاتصال',
                         onPressed: _isPickingContact ? null : _pickFromContacts,
@@ -335,21 +328,21 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                                   strokeWidth: 2,
                                 ),
                               )
-                            : const Icon(Icons.contacts_outlined, size: 20),
+                            : const Icon(AppIcons.customers, size: 20),
                       ),
                     ).copyWith(errorText: _phoneError),
                     validator: (value) {
                       final raw = value?.trim() ?? '';
-                      if (raw.isEmpty) return null;
+                      if (raw.isEmpty) return 'رقم هاتف العميل مطلوب';
                       try {
-                        AuthValidators.normalizeE164(raw);
+                        normalizeCustomerPhone(raw);
                         return null;
                       } catch (_) {
                         return 'أدخل رقم هاتف صحيحًا من 8 إلى 15 رقمًا';
                       }
                     },
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 14),
                   TextFormField(
                     controller: _limitController,
                     keyboardType: const TextInputType.numberWithOptions(
@@ -359,7 +352,7 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                     decoration: _decoration(
                       label: 'الحد الائتماني (اختياري)',
                       hint: '0.0000',
-                      icon: Icons.account_balance_wallet_outlined,
+                      icon: AppIcons.wallet,
                     ),
                     validator: (value) {
                       final raw = value?.trim() ?? '';
@@ -371,15 +364,15 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                       return null;
                     },
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 14),
                   TextFormField(
                     controller: _noteController,
                     maxLines: 3,
                     textInputAction: TextInputAction.newline,
                     decoration: _decoration(
-                      label: 'ملاحظة (اختيارية)',
+                      label: 'وصف العميل (اختياري)',
                       hint: 'أضف ملاحظة تساعدك على تذكر تفاصيل الحساب',
-                      icon: Icons.notes_rounded,
+                      icon: AppIcons.receipt,
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -393,10 +386,10 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                               height: 20,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2.3,
-                                color: Colors.white,
+                                color: AppColors.white,
                               ),
                             )
-                          : const Icon(Icons.check_circle_outline_rounded),
+                          : const Icon(AppIcons.check),
                       label: Text(
                         _isSubmitting
                             ? 'جاري حفظ العميل...'
@@ -404,7 +397,7 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                       ),
                       style: FilledButton.styleFrom(
                         backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
+                        foregroundColor: AppColors.white,
                         disabledBackgroundColor: AppColors.primary.withValues(
                           alpha: 0.7,
                         ),

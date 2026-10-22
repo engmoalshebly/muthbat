@@ -2,243 +2,148 @@ import { optionsResponse } from "../_shared/cors.ts";
 import { requireWorkerSecret } from "../_shared/auth.ts";
 import { errorResponse, json, readJson, requirePost } from "../_shared/http.ts";
 import { serviceClient } from "../_shared/supabase.ts";
-
-type WorkerRequest = { limit?: number };
-type Notification = {
-  outbox_id: number;
-  notification_id: string;
-  user_id: string;
-  notification_type: string;
-  title: string;
-  body: string;
-  data: Record<string, unknown>;
-};
-
-type DeviceToken = {
-  id: string;
-  push_token: string;
-  platform: string;
-  is_active: boolean;
-};
-
-// 1. Deliver via Expo Push API
-async function deliverExpo(token: string, notification: Notification): Promise<unknown> {
-  const endpoint = Deno.env.get("EXPO_PUSH_ENDPOINT") ?? "https://exp.host/--/api/v2/push/send";
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({
-      to: token,
-      sound: "default",
-      title: notification.title,
-      body: notification.body,
-      data: notification.data ?? {},
-    }),
-  });
-
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(`Expo provider returned ${response.status}: ${JSON.stringify(body)}`);
-  }
-  return body;
-}
-
-// 2. Deliver via Firebase Cloud Messaging (FCM Legacy or HTTP v1 endpoint)
-async function deliverFcm(token: string, notification: Notification): Promise<unknown> {
-  const serverKey = Deno.env.get("FCM_SERVER_KEY");
-  const projectId = Deno.env.get("FCM_PROJECT_ID");
-
-  if (serverKey) {
-    // Legacy FCM HTTP Protocol
-    const response = await fetch("https://fcm.googleapis.com/fcm/send", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `key=${serverKey}`,
-      },
-      body: JSON.stringify({
-        to: token,
-        notification: {
-          title: notification.title,
-          body: notification.body,
-          sound: "default",
-        },
-        data: notification.data ?? {},
-        priority: "high",
-      }),
-    });
-
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(`FCM provider returned ${response.status}: ${JSON.stringify(body)}`);
-    }
-    return body;
-  } else if (projectId) {
-    // FCM HTTP v1 (Requires Bearer OAuth token or fallback)
-    const bearerToken = Deno.env.get("FCM_BEARER_TOKEN");
-    if (!bearerToken) {
-      throw new Error("Missing FCM_BEARER_TOKEN or FCM_SERVER_KEY for FCM delivery.");
-    }
-
-    const response = await fetch(
-      `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${bearerToken}`,
-        },
-        body: JSON.stringify({
-          message: {
-            token: token,
-            notification: {
-              title: notification.title,
-              body: notification.body,
-            },
-            data: Object.fromEntries(
-              Object.entries(notification.data ?? {}).map(([k, v]) => [k, String(v)]),
-            ),
-          },
-        }),
-      },
-    );
-
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(`FCM v1 provider returned ${response.status}: ${JSON.stringify(body)}`);
-    }
-    return body;
-  } else {
-    throw new Error("FCM provider configured but no FCM_SERVER_KEY or FCM_PROJECT_ID found.");
-  }
-}
+import { deliverFcm, permanentFcmFailure } from "../_shared/fcm.ts";
 
 Deno.serve(async (request) => {
   const preflight = optionsResponse(request);
   if (preflight) return preflight;
-
-  const methodError = requirePost(request);
-  if (methodError) return methodError;
-
+  const method = requirePost(request);
+  if (method) return method;
   try {
-    requireWorkerSecret(request);
-    const workerRequest = await readJson<WorkerRequest>(request).catch(() => ({} as WorkerRequest));
-    const limit = workerRequest.limit ?? 50;
+    requireWorkerSecret(request, "NOTIFICATION_WORKER_SECRET");
+    if (Deno.env.get("PUSH_PROVIDER") !== "fcm") {
+      throw new Error("PUSH_PROVIDER must be fcm for Android production");
+    }
+    const input = await readJson<{ limit?: number }>(request).catch(
+      () => ({} as { limit?: number }),
+    );
+    const limit = Number.isFinite(input.limit)
+      ? Math.max(1, Math.min(input.limit!, 50))
+      : 25;
     const admin = serviceClient();
-
-    // 1. Claim batch of queued notifications atomically with lock
-    const { data: jobs, error } = await admin.rpc("service_claim_notification_batch", {
-      p_limit: Math.max(1, Math.min(limit, 100)),
-    });
-
+    const { data: jobs, error } = await admin.rpc(
+      "service_claim_notification_batch",
+      { p_limit: limit },
+    );
     if (error) throw error;
-
-    let completed = 0;
-    let retried = 0;
-    const configuredProvider = Deno.env.get("PUSH_PROVIDER") ?? "in_app";
-
-    for (const notification of (jobs ?? []) as Notification[]) {
+    let completed = 0, retried = 0;
+    for (const notice of jobs ?? []) {
       try {
-        // 2. Fetch registered active push tokens for this user
-        const { data: tokens, error: tokenError } = await admin
-          .from("device_push_tokens")
-          .select("id,push_token,platform,is_active")
-          .eq("user_id", notification.user_id)
-          .eq("is_active", true);
-
+        const { data: prefs, error: prefError } = await admin.from(
+          "notification_preferences",
+        ).select("*").eq("user_id", notice.user_id).maybeSingle();
+        if (prefError) throw prefError;
+        const type = notice.notification_type as string;
+        const disabled = prefs && (!prefs.push_enabled ||
+          (["ledger_created", "ledger_confirmed"].includes(type) &&
+            !prefs.financial_enabled) ||
+          (type.startsWith("dispute") || type === "ledger_disputed" ||
+              notice.data?.entity_type === "dispute") &&
+            !prefs.disputes_enabled ||
+          (["reminder", "payment_due"].includes(type) &&
+            !prefs.reminders_enabled));
+        const { data: tokens, error: tokenError } = await admin.from(
+          "device_push_tokens",
+        ).select("id,push_token").eq("user_id", notice.user_id).eq(
+          "platform",
+          "android",
+        ).eq("is_active", true);
         if (tokenError) throw tokenError;
-
-        const activeTokens = (tokens ?? []) as DeviceToken[];
-
-        if (activeTokens.length === 0 || configuredProvider === "in_app" || configuredProvider === "mock") {
-          // In-App only or Mock mode
-          for (const token of activeTokens) {
-            await admin.rpc("service_record_notification_delivery_attempt", {
-              p_outbox_id: notification.outbox_id,
-              p_provider: configuredProvider,
-              p_device_token_id: token.id,
+        let sent = false;
+        const failures: string[] = [];
+        if (disabled || notice.data?.push === false || !tokens?.length) {
+          const { error: skipError } = await admin.rpc(
+            "service_record_notification_delivery_attempt",
+            {
+              p_outbox_id: notice.outbox_id,
+              p_provider: "fcm",
+              p_device_token_id: null,
               p_status: "skipped",
-              p_provider_response: { reason: "in_app_or_mock_provider" },
-            });
-          }
-        } else {
-          // Dispatch to the configured push provider with per-token failure
-          // isolation: a single failing token must NOT fail the whole
-          // notification. Failing the job after some tokens already received
-          // the push causes a retry that duplicates the notification on those
-          // devices (no idempotency exists at (outbox_id, device_token_id)).
-          let sentCount = 0;
-          let failedCount = 0;
-          const failures: string[] = [];
-
-          for (const token of activeTokens) {
+              p_provider_response: {
+                reason: disabled
+                  ? "user_preferences"
+                  : notice.data?.push === false
+                  ? "in_app_only"
+                  : "no_active_android_device",
+              },
+            },
+          );
+          if (skipError) throw skipError;
+        }
+        if (!disabled && notice.data?.push !== false) {
+          for (const token of tokens ?? []) {
+            const { data: previous, error: previousError } = await admin.rpc(
+              "service_notification_device_sent",
+              { p_outbox_id: notice.outbox_id, p_device_token_id: token.id },
+            );
+            if (previousError) throw previousError;
+            if (previous) {
+              sent = true;
+              continue;
+            }
             try {
-              let providerResponse: unknown = null;
-              if (configuredProvider === "fcm") {
-                providerResponse = await deliverFcm(token.push_token, notification);
-              } else if (configuredProvider === "expo") {
-                providerResponse = await deliverExpo(token.push_token, notification);
-              } else {
-                throw new Error(`Unsupported push provider: ${configuredProvider}`);
-              }
-
-              await admin.rpc("service_record_notification_delivery_attempt", {
-                p_outbox_id: notification.outbox_id,
-                p_provider: configuredProvider,
-                p_device_token_id: token.id,
-                p_status: "sent",
-                p_provider_response: providerResponse,
-              });
-              sentCount++;
-            } catch (tokenError) {
-              const errorMessage = tokenError instanceof Error ? tokenError.message : "push_failed";
-              await admin.rpc("service_record_notification_delivery_attempt", {
-                p_outbox_id: notification.outbox_id,
-                p_provider: configuredProvider,
-                p_device_token_id: token.id,
-                p_status: "failed",
-                p_error: errorMessage,
-              });
-              failedCount++;
-              failures.push(`${token.id}: ${errorMessage}`);
+              const result = await deliverFcm(token.push_token, notice);
+              const { error: recordError } = await admin.rpc(
+                "service_record_notification_delivery_attempt",
+                {
+                  p_outbox_id: notice.outbox_id,
+                  p_provider: "fcm",
+                  p_device_token_id: token.id,
+                  p_status: "sent",
+                  p_provider_response: result,
+                },
+              );
+              if (recordError) throw recordError;
+              sent = true;
+            } catch (error) {
+              const message = error instanceof Error
+                ? error.message
+                : "push_failed";
+              const permanent = permanentFcmFailure(error);
+              if (permanent) {
+                const { error: deactivateError } = await admin.from(
+                  "device_push_tokens",
+                ).update({ is_active: false }).eq("id", token.id);
+                if (deactivateError) throw deactivateError;
+              } else failures.push(message);
+              const { error: recordError } = await admin.rpc(
+                "service_record_notification_delivery_attempt",
+                {
+                  p_outbox_id: notice.outbox_id,
+                  p_provider: "fcm",
+                  p_device_token_id: token.id,
+                  p_status: "failed",
+                  p_error: message,
+                },
+              );
+              if (recordError) throw recordError;
             }
           }
-
-          if (sentCount === 0 && failedCount > 0) {
-            // No device received anything, so retrying the whole notification
-            // cannot duplicate a delivery. Throw to enter the backoff path.
-            throw new Error(`all_token_deliveries_failed: ${failures.join(" | ")}`);
-          }
-          // Partial or full success: the user received the notification on at
-          // least one device. Complete the job; failed tokens remain recorded
-          // as failed delivery attempts for diagnostics.
         }
-
-        // 3. Mark notification outbox job as completed
-        const { error: completeError } = await admin.rpc("service_complete_notification", {
-          p_outbox_id: notification.outbox_id,
-        });
-
-        if (completeError) throw completeError;
+        if (failures.length) throw new Error(failures.join(" | "));
+        const { error: finishError } = await admin.rpc(
+          "service_finish_notification",
+          { p_outbox_id: notice.outbox_id, p_sent: sent },
+        );
+        if (finishError) throw finishError;
         completed++;
-      } catch (jobError) {
-        const errorMessage = jobError instanceof Error ? jobError.message : "notification_failed";
-        await admin.rpc("service_fail_notification", {
-          p_outbox_id: notification.outbox_id,
-          p_error: errorMessage,
-        });
+      } catch (error) {
+        const { error: failError } = await admin.rpc(
+          "service_fail_notification",
+          {
+            p_outbox_id: notice.outbox_id,
+            p_error: error instanceof Error ? error.message : "push_failed",
+          },
+        );
+        if (failError) throw failError;
         retried++;
       }
     }
-
     return json(request, {
-      claimed: (jobs ?? []).length,
+      claimed: jobs?.length ?? 0,
       completed,
       retried,
-      provider: configuredProvider,
+      provider: "fcm",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown_error";

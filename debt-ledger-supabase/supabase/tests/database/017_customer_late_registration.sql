@@ -1,5 +1,5 @@
 begin;
-select plan(7);
+select plan(9);
 select set_config('test.late_id',(select customer_id::text from public.service_resolve_customer_phone(repeat('c',64),decode('abcd','hex'),'1234',1::smallint)),true);
 select is((select customer_id::text from public.service_resolve_customer_phone(repeat('c',64),decode('abcd','hex'),'1234',1::smallint)),current_setting('test.late_id'),'Directory retry resolves the same identity');
 select is((select count(*)::int from private.customer_contacts where phone_hash=repeat('c',64)),1,'Only one contact exists');
@@ -12,5 +12,7 @@ select is(public.service_claim_customer_phone('91811111-1111-1111-1111-111111111
 select ok(not has_function_privilege('authenticated','public.service_resolve_customer_phone(text,bytea,text,smallint)','execute'),'Client cannot enumerate phone identities');
 update auth.users set raw_app_meta_data='{"phone_verification_bypassed":true}' where id='91811111-1111-1111-1111-111111111111';
 select throws_ok($$select public.service_claim_customer_phone('91811111-1111-1111-1111-111111111111',repeat('c',64),decode('abcd','hex'),'1234',1::smallint)$$,'42501','verified_phone_required','Bypassed verification cannot claim a phone');
+select is(public.service_claim_customer_phone('91811111-1111-1111-1111-111111111111',repeat('c',64),decode('abcd','hex'),'1234',1::smallint,true)::text,current_setting('test.late_id'),'Explicit trusted staging opt-in permits the claim');
+select is((select raw_app_meta_data->>'phone_verification_bypassed' from auth.users where id='91811111-1111-1111-1111-111111111111'),'true','Staging test does not mark the phone verified');
 select * from finish();
 rollback;

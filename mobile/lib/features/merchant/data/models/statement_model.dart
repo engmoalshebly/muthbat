@@ -17,6 +17,10 @@ class StatementModel {
   final String? createdAt;
   final String? downloadUrl;
 
+  /// Non-empty only for a PDF bundle; financial totals remain per statement.
+  final List<StatementModel> combinedStatements;
+  final List<Map<String, dynamic>> localEntries;
+
   const StatementModel({
     required this.id,
     required this.scope,
@@ -35,9 +39,14 @@ class StatementModel {
     this.snapshotSha256Hex,
     this.createdAt,
     this.downloadUrl,
+    this.combinedStatements = const [],
+    this.localEntries = const [],
   });
 
-  factory StatementModel.fromMap(Map<String, dynamic> map, {String? downloadUrl}) {
+  factory StatementModel.fromMap(
+    Map<String, dynamic> map, {
+    String? downloadUrl,
+  }) {
     return StatementModel(
       id: map['id'] as String,
       scope: map['scope'] as String? ?? 'business_customer',
@@ -80,7 +89,10 @@ class StatementModel {
     };
   }
 
-  StatementModel copyWith({String? downloadUrl}) {
+  StatementModel copyWith({
+    String? downloadUrl,
+    List<StatementModel>? combinedStatements,
+  }) {
     return StatementModel(
       id: id,
       scope: scope,
@@ -99,6 +111,8 @@ class StatementModel {
       snapshotSha256Hex: snapshotSha256Hex,
       createdAt: createdAt,
       downloadUrl: downloadUrl ?? this.downloadUrl,
+      combinedStatements: combinedStatements ?? this.combinedStatements,
+      localEntries: localEntries,
     );
   }
 }

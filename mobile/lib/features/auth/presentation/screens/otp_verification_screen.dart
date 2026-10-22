@@ -105,7 +105,7 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
 
     if (success && mounted) {
       if (pendingAction == AuthPendingAction.recovery) {
-        // جلسة الاسترداد نشطة — الخطوة التالية: تعيين كلمة سر جديدة.
+        // يتحقق الخادم من الرمز مع تغيير كلمة السر في الخطوة التالية.
         Navigator.pushNamed(context, '/reset-password');
       } else {
         _showSuccessDialog();
@@ -119,7 +119,7 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
       barrierDismissible: false,
       builder: (ctx) {
         return AlertDialog(
-          backgroundColor: Colors.white,
+          backgroundColor: AppColors.white,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(28),
           ),
@@ -228,7 +228,7 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
+        backgroundColor: AppColors.transparent,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(
@@ -253,15 +253,15 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE7F8EE),
+                  color: AppColors.messagingSurface,
                   borderRadius: BorderRadius.circular(18),
                   border: Border.all(
-                    color: const Color(0xFF25D366).withValues(alpha: 0.4),
+                    color: AppColors.messagingGreen.withValues(alpha: 0.4),
                     width: 1.2,
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: const Color(0xFF25D366).withValues(alpha: 0.08),
+                      color: AppColors.messagingGreen.withValues(alpha: 0.08),
                       blurRadius: 12,
                       offset: const Offset(0, 3),
                     ),
@@ -273,12 +273,12 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
                       width: 44,
                       height: 44,
                       decoration: const BoxDecoration(
-                        color: Color(0xFF25D366),
+                        color: AppColors.messagingGreen,
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(
                         Icons.chat_bubble_rounded,
-                        color: Colors.white,
+                        color: AppColors.white,
                         size: 24,
                       ),
                     ),
@@ -292,7 +292,7 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w800,
-                              color: Color(0xFF0F5132),
+                              color: AppColors.messagingInk,
                             ),
                           ),
                           const SizedBox(height: 2),
@@ -300,9 +300,9 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
                             'تحقق من رسائل تطبيق واتساب على رقمك',
                             style: TextStyle(
                               fontSize: 11,
-                              color: const Color(
-                                0xFF0F5132,
-                              ).withValues(alpha: 0.8),
+                              color: AppColors.messagingInk.withValues(
+                                alpha: 0.8,
+                              ),
                             ),
                           ),
                         ],
@@ -322,7 +322,7 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
                     vertical: 8,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: AppColors.white,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(color: AppColors.borderLight),
                   ),
@@ -362,7 +362,7 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
               Container(
                 padding: const EdgeInsets.all(22),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: AppColors.white,
                   borderRadius: BorderRadius.circular(24),
                   border: Border.all(color: AppColors.borderLight, width: 1.2),
                   boxShadow: [
@@ -516,7 +516,7 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
                                 content: Text(
                                   'تم إرسال رمز جديد إلى واتساب بنجاح 📲',
                                 ),
-                                backgroundColor: Color(0xFF25D366),
+                                backgroundColor: AppColors.messagingGreen,
                               ),
                             );
                           }
@@ -524,14 +524,14 @@ class _OtpVerificationScreenState extends ConsumerState<OtpVerificationScreen> {
                         icon: const Icon(
                           Icons.refresh_rounded,
                           size: 18,
-                          color: Color(0xFF128C7E),
+                          color: AppColors.messagingTeal,
                         ),
                         label: const Text(
                           'إعادة إرسال رمز التحقق عبر واتساب',
                           style: TextStyle(
                             fontWeight: FontWeight.w800,
                             fontSize: 13,
-                            color: Color(0xFF128C7E),
+                            color: AppColors.messagingTeal,
                           ),
                         ),
                       ),

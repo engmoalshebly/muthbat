@@ -14,32 +14,66 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 Future<void> migratePlaintextSqliteToEncrypted({
   required String path,
   required String passphrase,
+  int? minimumSchemaVersion,
+  List<String> minimumSchemaTables = const [],
 }) async {
   final file = File(path);
   if (!await file.exists()) return;
-  if (await looksSqlCipherEncrypted(file)) return;
+  if (await looksSqlCipherEncrypted(file)) {
+    if (minimumSchemaVersion == null || minimumSchemaTables.isEmpty) return;
+    final encryptedDb = await openDatabase(
+      path,
+      password: passphrase,
+      singleInstance: false,
+    );
+    try {
+      final tables = await _tableRowCounts(encryptedDb);
+      final currentVersion = await encryptedDb.getVersion();
+      if (currentVersion < minimumSchemaVersion &&
+          minimumSchemaTables.every(tables.containsKey)) {
+        await encryptedDb.setVersion(minimumSchemaVersion);
+      }
+    } finally {
+      await encryptedDb.close();
+    }
+    return;
+  }
 
   final tmpPath = '$path.encrypting.tmp';
   final tmpFile = File(tmpPath);
   if (await tmpFile.exists()) await tmpFile.delete();
 
-  final plainDb = await openDatabase(path);
+  final plainDb = await openDatabase(path, singleInstance: false);
   Map<String, int> beforeCounts;
+  late final int schemaVersion;
   try {
+    final existingVersion = await plainDb.getVersion();
     beforeCounts = await _tableRowCounts(plainDb);
+    schemaVersion =
+        minimumSchemaVersion != null &&
+            existingVersion < minimumSchemaVersion &&
+            minimumSchemaTables.isNotEmpty &&
+            minimumSchemaTables.every(beforeCounts.containsKey)
+        ? minimumSchemaVersion
+        : existingVersion;
     await plainDb.execute(
       "ATTACH DATABASE '${_escapeSqlLiteral(tmpPath)}' AS encrypted "
       "KEY '${_escapeSqlLiteral(passphrase)}'",
     );
-    await plainDb.execute("SELECT sqlcipher_export('encrypted')");
+    await plainDb.rawQuery("SELECT sqlcipher_export('encrypted')");
     await plainDb.execute('DETACH DATABASE encrypted');
   } finally {
     await plainDb.close();
   }
 
-  final encryptedDb = await openDatabase(tmpPath, password: passphrase);
+  final encryptedDb = await openDatabase(
+    tmpPath,
+    password: passphrase,
+    singleInstance: false,
+  );
   final Map<String, int> afterCounts;
   try {
+    await encryptedDb.setVersion(schemaVersion);
     afterCounts = await _tableRowCounts(encryptedDb);
   } finally {
     await encryptedDb.close();

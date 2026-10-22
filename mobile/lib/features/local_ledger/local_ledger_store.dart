@@ -1,12 +1,16 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as path;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/database/db_encryption.dart';
 import '../../core/database/sqlcipher_migration.dart';
+import '../../core/config/env.dart';
+import '../../core/config/supabase_config.dart';
 import '../../core/finance/money.dart';
 import '../../core/security/encrypted_backup.dart';
 
@@ -44,13 +48,32 @@ class LocalLedgerStore {
   static const maxMinor = 999999999999999;
   static const _dbFileName = 'muthbat_local_notebooks.db';
 
+  String get databaseFileName => _databaseFileName;
+
+  String get _environmentNamespace {
+    final uri = Uri.tryParse(SupabaseConfig.effectiveUrl);
+    final project = uri == null || uri.host.isEmpty
+        ? 'offline'
+        : uri.hasPort
+        ? '${uri.host}_${uri.port}'
+        : uri.host;
+    return '${EnvConfig.env.name}_$project'.replaceAll(
+      RegExp(r'[^a-zA-Z0-9_-]'),
+      '_',
+    );
+  }
+
+  String get _databaseFileName =>
+      'muthbat_${_environmentNamespace}_local_notebooks.db';
+
   Future<Database> get database => _opening ??= _open();
 
   Future<Database> _open() async {
-    final location =
-        _path ?? path.join(await _factory.getDatabasesPath(), _dbFileName);
+    final directory = await _factory.getDatabasesPath();
+    final location = _path ?? path.join(directory, _databaseFileName);
+    await _migratePreviousEnvironmentFile(directory, location);
 
-    void onCreate(Database db, int _) async {
+    Future<void> onCreate(Database db, int _) async {
       await db.execute(
         'CREATE TABLE notebooks (id TEXT PRIMARY KEY, document TEXT NOT NULL)',
       );
@@ -66,11 +89,38 @@ class LocalLedgerStore {
       );
     }
 
-    final passphrase = await _keyStore.passphraseFor(_dbFileName);
+    final passphrase = await _keyStore.passphraseFor(_databaseFileName);
     await migratePlaintextSqliteToEncrypted(
       path: location,
       passphrase: passphrase,
+      minimumSchemaVersion: 1,
+      minimumSchemaTables: const ['notebooks', 'settings'],
     );
+    // Older SQLCipher exports copied the tables but left user_version at 0.
+    // sqflite then runs onCreate against those existing tables. Repair only
+    // the complete notebook schema; never reset or overwrite its contents.
+    if (await File(location).exists()) {
+      final existing = await _factory.openDatabase(
+        location,
+        options: SqlCipherOpenDatabaseOptions(password: passphrase),
+      );
+      try {
+        if (await existing.getVersion() == 0) {
+          final tables = await existing.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('notebooks', 'settings')",
+          );
+          final names = tables.map((row) => row['name']).toSet();
+          if (names.contains('notebooks') && names.contains('settings')) {
+            await existing.setVersion(1);
+          } else if (names.isNotEmpty) {
+            throw StateError('Incomplete local notebook schema');
+          }
+        }
+      } finally {
+        await existing.close();
+      }
+    }
     return _factory.openDatabase(
       location,
       options: SqlCipherOpenDatabaseOptions(
@@ -81,6 +131,43 @@ class LocalLedgerStore {
     );
   }
 
+  Future<void> _migratePreviousEnvironmentFile(
+    String directory,
+    String location,
+  ) async {
+    if (_path != null || await File(location).exists()) return;
+    final previous = path.join(directory, _dbFileName);
+    if (!await File(previous).exists()) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    const claimKey = 'muthbat_legacy_notebook_claim_v1';
+    final claim = prefs.getString(claimKey);
+    final claimValue = _environmentNamespace;
+    if (claim != null && claim != claimValue) return;
+    if (!await prefs.setString(claimKey, claimValue)) {
+      throw StateError('Unable to reserve legacy notebook storage.');
+    }
+
+    if (_useEncryption) {
+      final previousPassphrase = await _keyStore.passphraseFor(_dbFileName);
+      await migratePlaintextSqliteToEncrypted(
+        path: previous,
+        passphrase: previousPassphrase,
+        minimumSchemaVersion: 1,
+        minimumSchemaTables: const ['notebooks', 'settings'],
+      );
+      if (!await _keyStore.copyPassphrase(
+        sourceFileName: _dbFileName,
+        targetFileName: _databaseFileName,
+      )) {
+        throw StateError(
+          'Cannot safely isolate the local notebook: encryption key is missing.',
+        );
+      }
+    }
+    await File(previous).copy(location);
+  }
+
   Future<JsonMap?> current() async {
     final db = await database;
     final rows = await db.rawQuery(
@@ -89,6 +176,30 @@ class LocalLedgerStore {
     return rows.isEmpty
         ? null
         : jsonDecode(rows.first['document'] as String) as JsonMap;
+  }
+
+  Future<List<JsonMap>> notebooks() async {
+    final db = await database;
+    final rows = await db.query('notebooks');
+    return rows
+        .map((row) => jsonDecode(row['document'] as String) as JsonMap)
+        .toList();
+  }
+
+  Future<void> selectNotebook(String id) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'notebooks',
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      if (rows.isEmpty) throw StateError('الدفتر غير موجود');
+      await txn.insert('settings', {
+        'id': 1,
+        'active_id': id,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
   }
 
   Future<void> create(String name, String currency) async {
@@ -124,12 +235,19 @@ class LocalLedgerStore {
     });
   }
 
-  Future<T> _edit<T>(T Function(JsonMap) action) async {
+  Future<T> _edit<T>(T Function(JsonMap) action, {String? notebookId}) async {
     final db = await database;
     return db.transaction((txn) async {
-      final rows = await txn.rawQuery(
-        'SELECT n.document FROM notebooks n JOIN settings s ON s.active_id=n.id WHERE s.id=1',
-      );
+      final rows = notebookId == null
+          ? await txn.rawQuery(
+              'SELECT n.document FROM notebooks n JOIN settings s ON s.active_id=n.id WHERE s.id=1',
+            )
+          : await txn.query(
+              'notebooks',
+              columns: ['document'],
+              where: 'id=?',
+              whereArgs: [notebookId],
+            );
       if (rows.isEmpty) throw StateError('لا يوجد دفتر محلي');
       final doc = jsonDecode(rows.first['document'] as String) as JsonMap;
       final result = action(doc);
@@ -142,6 +260,63 @@ class LocalLedgerStore {
       );
       return result;
     });
+  }
+
+  /// Create a customer without adding a financial entry.
+  Future<String> addCustomer(
+    String name, {
+    required String phone,
+    String description = '',
+  }) => _edit((doc) {
+    if (doc['transfer_state'] != 'local') {
+      throw StateError('لا يمكن إضافة عميل إلى دفتر قيد النقل أو منقول');
+    }
+    final value = name.trim();
+    if (value.length < 2 || value.length > 120) {
+      throw const FormatException('اسم العميل من حرفين إلى 120 حرفًا');
+    }
+    final customers = doc['customers'] as List;
+    if (customers.any(
+      (c) => normalizeName(c['name']) == normalizeName(value),
+    )) {
+      throw const FormatException('هذا العميل موجود بالفعل في الدفتر');
+    }
+    if (phone.trim().isEmpty) {
+      throw const FormatException('رقم هاتف العميل مطلوب');
+    }
+    final phoneInput = normalizeDigits(phone.trim());
+    final normalizedPhone = phoneInput.replaceAll(RegExp(r'[^0-9]'), '');
+    if (!RegExp(r'^\+?[0-9\s()-]+$').hasMatch(phoneInput) ||
+        normalizedPhone.length < 7 ||
+        normalizedPhone.length > 15) {
+      throw const FormatException('أدخل رقم هاتف صحيحًا من 7 إلى 15 رقمًا');
+    }
+    if (description.trim().length > 500) {
+      throw const FormatException('وصف العميل لا يتجاوز 500 حرف');
+    }
+    final id = _uuid.v4();
+    customers.add({
+      'id': id,
+      'name': value,
+      'phone': normalizedPhone,
+      if (description.trim().isNotEmpty) 'description': description.trim(),
+    });
+    return id;
+  });
+
+  static bool matchesCustomer(Map customer, String query) {
+    final text = query.trim();
+    if (text.isEmpty) return true;
+    if (normalizeName(
+      customer['name'].toString(),
+    ).contains(normalizeName(text))) {
+      return true;
+    }
+    final digits = normalizeDigits(text).replaceAll(RegExp(r'[^0-9]'), '');
+    final phone = normalizeDigits(
+      customer['phone']?.toString() ?? '',
+    ).replaceAll(RegExp(r'[^0-9]'), '');
+    return digits.isNotEmpty && phone.contains(digits);
   }
 
   Future<String> record({
@@ -270,7 +445,14 @@ class LocalLedgerStore {
 
   /// Persist the recipient and freeze the snapshot BEFORE making a network call.
   /// A timeout is ambiguous, so only a retry for the same account is allowed.
-  Future<JsonMap> reserveTransfer(String userId) => _edit((doc) {
+  Future<JsonMap> reserveTransfer(
+    String userId, {
+    JsonMap? expectedSnapshot,
+  }) => _edit((doc) {
+    if (expectedSnapshot != null &&
+        transferFingerprint(doc) != transferFingerprint(expectedSnapshot)) {
+      throw StateError('تغيّر الدفتر أثناء المراجعة. راجع بياناته قبل النقل.');
+    }
     if ((doc['entries'] as List).length > 20000 ||
         (doc['customers'] as List).length > 5000) {
       throw StateError(
@@ -283,15 +465,19 @@ class LocalLedgerStore {
     doc['owner_id'] = userId;
     if (doc['transfer_state'] != 'complete') {
       doc['transfer_state'] = 'transferring';
-      doc['transfer_checkpoint'] = 'reserved';
+      if (doc['transfer_checkpoint'] == null ||
+          doc['transfer_checkpoint'] == 'not_started') {
+        doc['transfer_checkpoint'] = 'reserved';
+      }
     }
     return jsonDecode(jsonEncode(doc)) as JsonMap;
-  });
+  }, notebookId: expectedSnapshot?['id'] as String?);
 
   Future<void> markTransferCheckpoint(
     String userId,
     String checkpoint, {
     String? backupPath,
+    String? notebookId,
   }) => _edit((doc) {
     if (doc['owner_id'] != userId) {
       throw StateError('تغيّر الحساب أثناء النقل');
@@ -304,18 +490,39 @@ class LocalLedgerStore {
     }.contains(checkpoint)) {
       throw ArgumentError.value(checkpoint, 'checkpoint');
     }
-    doc['transfer_checkpoint'] = checkpoint;
+    const order = [
+      'not_started',
+      'reserved',
+      'backup_created',
+      'uploaded',
+      'verified',
+      'complete',
+    ];
+    if (order.indexOf(checkpoint) >
+        order.indexOf(doc['transfer_checkpoint'] ?? 'reserved')) {
+      doc['transfer_checkpoint'] = checkpoint;
+    }
     if (backupPath != null) doc['transfer_backup_path'] = backupPath;
-  });
+  }, notebookId: notebookId);
 
-  Future<void> completeTransfer(String userId, String businessId) => _edit((
-    doc,
-  ) {
+  Future<void> completeTransfer(
+    String userId,
+    String businessId, {
+    String? notebookId,
+  }) => _edit((doc) {
     if (doc['owner_id'] != userId) throw StateError('تغيّر الحساب أثناء النقل');
+    if (doc['transfer_checkpoint'] != 'verified' &&
+        doc['transfer_checkpoint'] != 'complete') {
+      throw StateError('يجب التحقق من بيانات الخادم قبل إكمال النقل.');
+    }
+    if (doc['server_business_id'] != null &&
+        doc['server_business_id'] != businessId) {
+      throw StateError('هذا الدفتر مرتبط بنشاط آخر.');
+    }
     doc['transfer_state'] = 'complete';
     doc['transfer_checkpoint'] = 'complete';
     doc['server_business_id'] = businessId;
-  });
+  }, notebookId: notebookId);
 
   /// [password]: when given, the returned file is wrapped in an
   /// [EncryptedBackupCodec] envelope. Omitted for backward compatibility with
@@ -323,6 +530,26 @@ class LocalLedgerStore {
   Future<String> backup({String? password}) async {
     final doc = await current();
     if (doc == null) throw StateError('لا يوجد دفتر');
+    return encodeBackup(doc, password: password);
+  }
+
+  /// Excludes transfer progress so a retry can validate the same financial snapshot.
+  static String transferFingerprint(JsonMap doc) => sha256
+      .convert(
+        utf8.encode(
+          jsonEncode({
+            'id': doc['id'],
+            'name': doc['name'],
+            'currency': doc['currency'],
+            'customers': doc['customers'],
+            'entries': doc['entries'],
+          }),
+        ),
+      )
+      .toString();
+
+  static Future<String> encodeBackup(JsonMap doc, {String? password}) async {
+    validate(doc);
     final payload = jsonEncode(doc);
     final envelope = jsonEncode({
       'format': 'muthbat-notebook',
@@ -364,10 +591,35 @@ class LocalLedgerStore {
     final doc = decodeBackup(text);
     final db = await database;
     await db.transaction((txn) async {
-      if ((await txn.query('notebooks')).isNotEmpty) {
-        throw StateError(
-          'الاستعادة متاحة على جهاز بلا دفتر محلي؛ لن نستبدل بياناتك الحالية',
-        );
+      final existing = await txn.query(
+        'notebooks',
+        where: 'id = ?',
+        whereArgs: [doc['id']],
+      );
+      if (existing.isNotEmpty) {
+        final stored =
+            jsonDecode(existing.first['document'] as String) as JsonMap;
+        if (stored['transfer_state'] != 'local' ||
+            doc['transfer_state'] != 'local') {
+          if (transferFingerprint(stored) != transferFingerprint(doc)) {
+            throw StateError(
+              'توجد نسخة مرتبطة بالحساب لهذا الدفتر ببيانات مختلفة. لم تُستبدل أي بيانات.',
+            );
+          }
+          // Keep the original notebook identity and the furthest durable
+          // transfer progress. Cloning a reserved notebook creates a new
+          // import key and could duplicate its financial history.
+          await txn.insert('settings', {
+            'id': 1,
+            'active_id': stored['id'],
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+          return;
+        }
+        doc['id'] = _uuid.v4();
+        final name = doc['name'].toString();
+        doc['name'] =
+            '${name.length > 108 ? name.substring(0, 108) : name} • مستعاد';
+        // Keep transfer/owner metadata: importing never grants cloud authority.
       }
       await txn.insert('notebooks', {
         'id': doc['id'],

@@ -15,9 +15,7 @@ class SplashBackground extends StatelessWidget {
         Container(
           width: double.infinity,
           height: double.infinity,
-          decoration: const BoxDecoration(
-            gradient: AppColors.splashGradient,
-          ),
+          decoration: const BoxDecoration(gradient: AppColors.splashGradient),
         ),
 
         // 2. وهج علوي أزرق بترولي (Top-Right Ambient Glow)
@@ -32,7 +30,7 @@ class SplashBackground extends StatelessWidget {
               gradient: RadialGradient(
                 colors: [
                   AppColors.secondary.withValues(alpha: 0.22),
-                  Colors.transparent,
+                  AppColors.transparent,
                 ],
               ),
             ),
@@ -51,7 +49,7 @@ class SplashBackground extends StatelessWidget {
               gradient: RadialGradient(
                 colors: [
                   AppColors.accentGold.withValues(alpha: 0.12),
-                  Colors.transparent,
+                  AppColors.transparent,
                 ],
               ),
             ),
@@ -59,10 +57,7 @@ class SplashBackground extends StatelessWidget {
         ),
 
         // 4. خطوط الشبكة الهندسية فائقة الرقة (Subtle Ledger Grid)
-        CustomPaint(
-          size: Size.infinite,
-          painter: _LedgerGridPainter(),
-        ),
+        CustomPaint(size: Size.infinite, painter: _LedgerGridPainter()),
 
         // 5. المحتوى الرئيسي
         child,
@@ -75,7 +70,7 @@ class _LedgerGridPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.02)
+      ..color = AppColors.white.withValues(alpha: 0.02)
       ..strokeWidth = 1.0;
 
     const double step = 48.0;

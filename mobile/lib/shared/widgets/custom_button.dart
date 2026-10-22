@@ -2,13 +2,7 @@ import 'package:flutter/material.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/app_typography.dart';
 
-enum ButtonVariant {
-  primary,
-  secondary,
-  gold,
-  outline,
-  text,
-}
+enum ButtonVariant { primary, secondary, gold, outline, text }
 
 /// زر تفاعلي فاخر متعدد الأنماط لمنظومة «مُثبَت | MUTHBAT»
 class CustomButton extends StatelessWidget {
@@ -108,7 +102,7 @@ class CustomButton extends StatelessWidget {
     switch (variant) {
       case ButtonVariant.gold:
         gradient = AppColors.goldGradient;
-        textColor = const Color(0xFF4A3408);
+        textColor = AppColors.goldInk;
         shadows = [
           BoxShadow(
             color: AppColors.accentGold.withValues(alpha: 0.3),
@@ -119,7 +113,7 @@ class CustomButton extends StatelessWidget {
         break;
       case ButtonVariant.secondary:
         gradient = AppColors.tealGradient;
-        textColor = Colors.white;
+        textColor = AppColors.white;
         shadows = [
           BoxShadow(
             color: AppColors.secondary.withValues(alpha: 0.28),
@@ -131,7 +125,7 @@ class CustomButton extends StatelessWidget {
       case ButtonVariant.primary:
       default:
         gradient = AppColors.brandGradient;
-        textColor = Colors.white;
+        textColor = AppColors.white;
         shadows = [
           BoxShadow(
             color: AppColors.primary.withValues(alpha: 0.24),
@@ -154,12 +148,12 @@ class CustomButton extends StatelessWidget {
         boxShadow: isDisabled ? null : shadows,
       ),
       child: Material(
-        color: Colors.transparent,
+        color: AppColors.transparent,
         child: InkWell(
           onTap: isDisabled ? null : onPressed,
           borderRadius: radius,
-          splashColor: Colors.white.withValues(alpha: 0.15),
-          highlightColor: Colors.white.withValues(alpha: 0.08),
+          splashColor: AppColors.white.withValues(alpha: 0.15),
+          highlightColor: AppColors.white.withValues(alpha: 0.08),
           child: Center(
             child: _buildContent(isDisabled ? AppColors.textMuted : textColor),
           ),
@@ -190,9 +184,9 @@ class CustomButton extends StatelessWidget {
         ],
         Text(
           text,
-          style: AppTypography.titleSmall(color: color).copyWith(
-            fontWeight: FontWeight.w700,
-          ),
+          style: AppTypography.titleSmall(
+            color: color,
+          ).copyWith(fontWeight: FontWeight.w700),
         ),
       ],
     );

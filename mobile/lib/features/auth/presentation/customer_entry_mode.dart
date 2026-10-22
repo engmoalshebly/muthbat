@@ -1,14 +1,12 @@
-import 'package:shared_preferences/shared_preferences.dart';
+import 'workspace_preference.dart';
 
 /// UI preference only; never grants server permissions.
 class CustomerEntryMode {
   static Future<void> remember(String userId, bool customer) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('customer_workspace_$userId', customer);
+    await WorkspacePreference.save(userId, customer ? 'customer' : 'merchant');
   }
 
   static Future<bool> selected(String userId) async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('customer_workspace_$userId') ?? false;
+    return (await WorkspacePreference.read(userId))?['kind'] == 'customer';
   }
 }

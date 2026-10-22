@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import '../../../../app/theme/app_colors.dart';
+import '../../../../app/theme/app_icons.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../auth/presentation/controllers/auth_controller.dart';
+import '../widgets/customer_dispute_button.dart';
 
 /// Read-only customer receipt. No merchant mutation controls are exposed.
 class CustomerEntryDetailsScreen extends ConsumerWidget {
@@ -38,15 +41,15 @@ class CustomerEntryDetailsScreen extends ConsumerWidget {
       'نوع العملية': type,
       'المبلغ':
           '${NumberFormat('#,##0.####').format(entry['amount'] ?? 0)} ${entry['currency_code'] ?? ''}',
-      'الوصف': entry['description']?.toString() ?? 'غير متاح',
+      'الوصف': (entry['description']?.toString().trim().isNotEmpty ?? false)
+          ? entry['description'].toString()
+          : 'لم يُضف وصف لهذه الحركة',
       'التاريخ': date == null
           ? 'غير متاح'
           : DateFormat('yyyy/MM/dd • HH:mm').format(date.toLocal()),
-      'حالة التأكيد': switch (entry['confirmation_status']) {
-        'confirmed' => 'مؤكدة',
-        'pending' => 'بانتظار التأكيد',
-        _ => 'غير متاح',
-      },
+      'حالة العملية': entry['is_reversed'] == true
+          ? 'تم عكسها بقيد تصحيحي'
+          : 'مسجلة في الحساب',
       'حالة الاعتراض': switch (entry['dispute_status']) {
         'open' => 'اعتراض مفتوح',
         'resolved' => 'تمت معالجة الاعتراض',
@@ -62,36 +65,168 @@ class CustomerEntryDetailsScreen extends ConsumerWidget {
         'حالة القيد': 'تم عكسه بقيد تصحيحي؛ الأصل محفوظ',
       'مرجع العملية': entry['id']?.toString() ?? 'غير متاح',
     };
+    final accent = AppColors.transactionColor(entry['entry_type'].toString());
     return Scaffold(
-      appBar: AppBar(title: const Text('تفاصيل عمليتي')),
+      backgroundColor: AppColors.backgroundLight,
+      appBar: AppBar(
+        backgroundColor: AppColors.backgroundLight,
+        elevation: 0,
+        title: const Text(
+          'تفاصيل الحركة',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        ),
+      ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
-          const Text(
-            'نسخة من بيانات حسابك لدى البقالة',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 12),
-          for (final field in fields.entries)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              gradient: AppColors.cardGradient,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    Text(
-                      field.key,
-                      style: Theme.of(context).textTheme.labelMedium,
+                    CircleAvatar(
+                      backgroundColor: AppColors.white.withValues(alpha: .16),
+                      child: Icon(
+                        AppIcons.transaction(entry['entry_type'].toString()),
+                        color: AppColors.white,
+                      ),
                     ),
-                    const SizedBox(height: 6),
-                    SelectableText(field.value),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        type,
+                        style: const TextStyle(
+                          color: AppColors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
-              ),
+                const SizedBox(height: 10),
+                Text(
+                  fields['المبلغ'] ?? '',
+                  style: const TextStyle(
+                    color: AppColors.white,
+                    fontSize: 21,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  fields['البقالة'] ?? businessName,
+                  style: const TextStyle(color: AppColors.white70),
+                ),
+              ],
             ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.borderLight),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.notes_rounded, size: 18, color: accent),
+                    const SizedBox(width: 7),
+                    const Text(
+                      'وصف الحركة',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SelectableText(
+                  fields['الوصف']!,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    height: 1.6,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppColors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.borderLight),
+            ),
+            child: Column(
+              children: [
+                for (final field in fields.entries.where(
+                  (f) => ![
+                    'المبلغ',
+                    'البقالة',
+                    'نوع العملية',
+                    'الوصف',
+                  ].contains(f.key),
+                ))
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 100,
+                          child: Text(
+                            field.key,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: SelectableText(
+                            field.value,
+                            textAlign: TextAlign.end,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              height: 1.5,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          CustomerDisputeButton(
+            entry: entry,
+            ownerId: ownerId,
+            businessName: businessName,
+          ),
           const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
-            child: Text('عرض العملية لا يعني تأكيدها أو الإقرار بصحتها.'),
+            padding: EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+            child: Text(
+              'تُسجل العمليات مباشرة دون قبول أو رفض. يمكنك الاعتراض من تفاصيل العملية؛ الاعتراض لا يغير الرصيد حتى معالجة التاجر له.',
+              style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+            ),
           ),
         ],
       ),

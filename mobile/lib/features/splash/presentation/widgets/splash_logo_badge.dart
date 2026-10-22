@@ -14,7 +14,7 @@ class SplashLogoBadge extends StatelessWidget {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.white,
         borderRadius: BorderRadius.circular(32),
         boxShadow: [
           BoxShadow(
@@ -32,7 +32,7 @@ class SplashLogoBadge extends StatelessWidget {
       padding: const EdgeInsets.all(18),
       child: Center(
         child: Image.asset(
-          AssetPaths.iconPng,
+          AssetPaths.mark,
           width: size * 0.75,
           height: size * 0.75,
           fit: BoxFit.contain,

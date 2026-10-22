@@ -3,9 +3,11 @@ import 'package:intl/intl.dart';
 import '../../../../app/theme/app_colors.dart';
 import '../../data/models/customer_summary_model.dart';
 
-/// Personal balances only: never nets different shops or currencies together.
+/// Compact customer portfolio header. Currency totals stay separate to avoid
+/// presenting unlike currencies as one misleading amount.
 class CustomerBalanceOverview extends StatelessWidget {
   const CustomerBalanceOverview({super.key, required this.summaries});
+
   final List<CustomerBusinessSummary> summaries;
 
   @override
@@ -15,83 +17,166 @@ class CustomerBalanceOverview extends StatelessWidget {
       final values = totals.putIfAbsent(account.currencyCode, () => [0, 0]);
       if (account.currentBalance > 0) {
         values[0] += account.currentBalance;
-      } else {
+      } else if (account.currentBalance < 0) {
         values[1] += account.currentBalance.abs();
       }
     }
+    final shopsCount = summaries.map((s) => s.businessId).toSet().length;
     final format = NumberFormat('#,##0.##');
+
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.primary,
-        borderRadius: BorderRadius.circular(20),
+        color: AppColors.summarySurface,
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text(
-            'حساباتي لدى البقالات',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            '${summaries.map((s) => s.businessId).toSet().length} بقالات مرتبطة بحسابك',
-            style: const TextStyle(color: Colors.white70),
-          ),
-          const SizedBox(height: 16),
-          if (totals.isEmpty)
-            const Text(
-              'ستظهر أرصدتك هنا بعد ربط حسابك بالبقالات.',
-              style: TextStyle(color: Colors.white),
-            ),
-          for (final total in totals.entries)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _amount(
-                      'عليّ',
-                      '${format.format(total.value[0])} ${total.key}',
+          Row(
+            children: [
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'أرصدتك لدى المتاجر',
+                      style: TextStyle(
+                        color: AppColors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _amount(
-                      'لي',
-                      '${format.format(total.value[1])} ${total.key}',
+                    SizedBox(height: 2),
+                    Text(
+                      'ملخص الحساب',
+                      style: TextStyle(color: AppColors.white70, fontSize: 12),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
+              Text(
+                '$shopsCount بقالات',
+                style: const TextStyle(color: AppColors.white70, fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (totals.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppColors.white.withValues(alpha: .1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'ستظهر أرصدتك هنا بعد ربط حسابك بالمتاجر.',
+                style: TextStyle(color: AppColors.white),
+                textAlign: TextAlign.center,
+              ),
+            )
+          else
+            for (final total in totals.entries)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _BalanceTile(
+                        label: 'عليك',
+                        amount: format.format(total.value[0]),
+                        currency: total.key,
+                        icon: Icons.arrow_upward_rounded,
+                        tint: const Color(0xFFFFD7D4),
+                      ),
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: _BalanceTile(
+                        label: 'لك',
+                        amount: format.format(total.value[1]),
+                        currency: total.key,
+                        icon: Icons.arrow_downward_rounded,
+                        tint: const Color(0xFFD3F5E5),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          if (totals.length > 1)
+            Text(
+              'الأرصدة مفصولة حسب العملة',
+              style: TextStyle(
+                color: AppColors.white.withValues(alpha: .72),
+                fontSize: 10,
+              ),
+              textAlign: TextAlign.center,
             ),
-          const Text(
-            'الأرصدة منفصلة لكل عملة • التفاصيل داخل كل بقالة',
-            style: TextStyle(color: Colors.white70, fontSize: 11),
+        ],
+      ),
+    );
+  }
+}
+
+class _BalanceTile extends StatelessWidget {
+  const _BalanceTile({
+    required this.label,
+    required this.amount,
+    required this.currency,
+    required this.icon,
+    required this.tint,
+  });
+
+  final String label;
+  final String amount;
+  final String currency;
+  final IconData icon;
+  final Color tint;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.white.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.white24),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: tint, size: 16),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: AppColors.white70,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: AlignmentDirectional.centerStart,
+                  child: Text(
+                    '$amount $currency',
+                    maxLines: 1,
+                    style: TextStyle(
+                      color: tint,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
-
-  Widget _amount(String label, String value) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(label, style: const TextStyle(color: Colors.white70)),
-      const SizedBox(height: 4),
-      Text(
-        value,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 19,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    ],
-  );
 }

@@ -1,5 +1,11 @@
 project_id = "muthbat-staging"
 
+[functions.phone-password-signup]
+verify_jwt = false
+
+[functions.local-notebook-import]
+verify_jwt = true
+
 [auth]
 site_url = "debtledger://login-callback"
 additional_redirect_urls = ["debtledger://login-callback"]
@@ -24,3 +30,6 @@ enable_confirmations = true
 # being treated as a hosted provider.
 [auth.sms.twilio_verify]
 enabled = false
+
+[functions.customer-contacts]
+verify_jwt = true

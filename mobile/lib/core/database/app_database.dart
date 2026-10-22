@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:path/path.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../config/env.dart';
+import '../config/supabase_config.dart';
 import '../finance/currency_info.dart';
 import '../finance/money.dart';
 import '../sync/sync_policy.dart';
@@ -36,11 +39,104 @@ dynamic replaceReconciledIdDeep(
 /// جدول تسوية المعرّفات local_id_map، نقاط تحقق السحب التزايدي،
 /// وحارس ضد الحذف الصامت للطابور عند تسجيل الخروج.
 class AppDatabase {
+  Future<T> _writeTransaction<T>(
+    DatabaseExecutor db,
+    Future<T> Function(DatabaseExecutor) action,
+  ) {
+    return db is Database ? db.transaction((txn) => action(txn)) : action(db);
+  }
+
+  Future<void> queueCustomerProfileChange(
+    String customerId,
+    Map<String, dynamic> changes,
+    Map<String, dynamic> payload,
+  ) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'local_business_customers',
+        where: 'id=?',
+        whereArgs: [customerId],
+      );
+      if (rows.isEmpty) throw StateError('العميل غير موجود');
+      final parents = await txn.query(
+        'offline_mutations_queue',
+        columns: ['client_request_id'],
+        where: 'local_ref_id=?',
+        whereArgs: [customerId],
+        orderBy: 'id DESC',
+        limit: 1,
+      );
+      await txn.update(
+        'local_business_customers',
+        {
+          ...changes,
+          'sync_status': 'pending_update',
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        },
+        where: 'id=?',
+        whereArgs: [customerId],
+      );
+      await txn.insert('offline_mutations_queue', {
+        'client_request_id': _uuid.v4(),
+        'command_type': 'mutate_customer_profile',
+        'payload_json': jsonEncode(payload),
+        'local_ref_id': customerId,
+        'status': 'pending',
+        'attempt_count': 0,
+        'depends_on_client_request_id': parents.isEmpty
+            ? null
+            : parents.first['client_request_id'],
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+      });
+    });
+  }
+
+  Future<void> completeCustomerProfileMutation(
+    String requestId,
+    String customerId,
+  ) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete(
+        'offline_mutations_queue',
+        where: 'client_request_id=?',
+        whereArgs: [requestId],
+      );
+      final remaining = await txn.query(
+        'offline_mutations_queue',
+        columns: ['id'],
+        where: 'local_ref_id=?',
+        whereArgs: [customerId],
+        limit: 1,
+      );
+      if (remaining.isEmpty) {
+        await txn.update(
+          'local_business_customers',
+          {'sync_status': 'synced'},
+          where: 'id=?',
+          whereArgs: [customerId],
+        );
+      }
+    });
+  }
+
+  Future<bool> hasEarlierCustomerWork(String customerId, int queueId) async {
+    final db = await database;
+    final rows = await db.rawQuery(
+      '''SELECT q.id FROM offline_mutations_queue q
+      LEFT JOIN local_ledger_entries e ON e.id=q.local_ref_id
+      WHERE q.id<? AND (q.local_ref_id=? OR e.business_customer_id=?) LIMIT 1''',
+      [queueId, customerId, customerId],
+    );
+    return rows.isNotEmpty;
+  }
+
   AppDatabase._();
   static final AppDatabase instance = AppDatabase._();
 
   static const String _dbName = 'muthbat_offline_ledger.db';
-  static const int _dbVersion = 9;
+  static const int _dbVersion = 12;
 
   static const _uuid = Uuid();
   final DbEncryptionKeyStore _keyStore = DbEncryptionKeyStore();
@@ -54,10 +150,28 @@ class AppDatabase {
   DatabaseFactory get _factory => debugDatabaseFactory ?? databaseFactory;
 
   Database? _database;
+  Future<Database>? _openingDatabase;
   String? _accountId;
   String? get accountId => _accountId;
+  Future<void> _accountTransition = Future<void>.value();
   static const _rememberedOwnerKey = 'remembered_local_owner_v1';
   static const _rememberedCustomerKey = 'remembered_local_customer_v1';
+
+  String get _environmentNamespace {
+    final uri = Uri.tryParse(SupabaseConfig.effectiveUrl);
+    final project = uri == null || uri.host.isEmpty
+        ? 'offline'
+        : uri.hasPort
+        ? '${uri.host}_${uri.port}'
+        : uri.host;
+    return '${EnvConfig.env.name}_$project'.replaceAll(
+      RegExp(r'[^a-zA-Z0-9_-]'),
+      '_',
+    );
+  }
+
+  String _accountFileName(String userId) =>
+      'muthbat_${_environmentNamespace}_account_$userId.db';
 
   /// Local device access only. A cached profile is never a server credential.
   Future<void> rememberCustomer() async {
@@ -70,16 +184,18 @@ class AppDatabase {
   }
 
   Future<Map<String, dynamic>?> restoreRememberedCustomer() async {
-    final prefs = await SharedPreferences.getInstance();
-    final id = prefs.getString(_rememberedCustomerKey);
-    if (id == null) return null;
-    await bindAccount(id);
-    final profile = await getProfile(id);
-    if (profile == null) {
-      await lockAccount();
-      return null;
-    }
-    return profile;
+    return _serializeAccountTransition(() async {
+      final prefs = await SharedPreferences.getInstance();
+      final id = prefs.getString(_rememberedCustomerKey);
+      if (id == null) return null;
+      await _bindAccount(id);
+      final profile = await getProfile(id);
+      if (profile == null) {
+        await _lockAccount();
+        return null;
+      }
+      return profile;
+    });
   }
 
   /// Local access preference only: never used as a JWT or server credential.
@@ -93,16 +209,18 @@ class AppDatabase {
   }
 
   Future<Map<String, dynamic>?> restoreRememberedOwner() async {
-    final prefs = await SharedPreferences.getInstance();
-    final id = prefs.getString(_rememberedOwnerKey);
-    if (id == null) return null;
-    await bindAccount(id);
-    final business = await getBusinessByOwnerId(id);
-    if (business == null) {
-      await lockAccount();
-      return null;
-    }
-    return business;
+    return _serializeAccountTransition(() async {
+      final prefs = await SharedPreferences.getInstance();
+      final id = prefs.getString(_rememberedOwnerKey);
+      if (id == null) return null;
+      await _bindAccount(id);
+      final business = await getBusinessByOwnerId(id);
+      if (business == null) {
+        await _lockAccount();
+        return null;
+      }
+      return business;
+    });
   }
 
   Future<void> forgetRememberedOwner() async {
@@ -113,53 +231,161 @@ class AppDatabase {
 
   /// Call only after draining SyncEngine. Legacy storage is copied (not moved)
   /// only when its single cached profile establishes the account owner.
-  Future<void> bindAccount(String userId) async {
+  Future<void> bindAccount(String userId) =>
+      _serializeAccountTransition(() => _bindAccount(userId));
+
+  Future<void> _bindAccount(String userId) async {
     if (!RegExp(r'^[a-fA-F0-9-]{36}$').hasMatch(userId)) {
       throw ArgumentError('Invalid account id');
     }
-    if (_accountId == userId) return;
-    await _database?.close();
-    _database = null;
+    await _waitForDatabaseOpen();
+    if (_accountId == userId) {
+      final current = _database;
+      if (current != null && current.isOpen) return;
+      _database = null;
+      await database;
+      return;
+    }
+    final previousDatabase = _database;
     _accountId = null;
+    _database = null;
+    await previousDatabase?.close();
     final directory = await _factory.getDatabasesPath();
-    final target = join(directory, 'muthbat_account_$userId.db');
+    final targetName = _accountFileName(userId);
+    final target = join(directory, targetName);
+    final previousAccountName = 'muthbat_account_$userId.db';
+    final previousAccount = join(directory, previousAccountName);
     final legacy = join(directory, _dbName);
-    if (!await File(target).exists() && await File(legacy).exists()) {
-      final old = await _factory.openDatabase(
-        legacy,
-        options: OpenDatabaseOptions(readOnly: true),
-      );
-      bool belongsToUser = false;
-      try {
-        final profiles = await old.query('local_profiles', columns: ['id']);
-        belongsToUser = profiles.length == 1 && profiles.single['id'] == userId;
-      } finally {
-        await old.close();
+    if (!await File(target).exists()) {
+      final prefs = await SharedPreferences.getInstance();
+      final accountClaimKey = 'muthbat_legacy_account_claim_v1_$userId';
+      final accountClaim = prefs.getString(accountClaimKey);
+      if (await File(previousAccount).exists() &&
+          (accountClaim == null || accountClaim == _environmentNamespace)) {
+        if (!await prefs.setString(accountClaimKey, _environmentNamespace)) {
+          throw StateError('Unable to reserve legacy account storage.');
+        }
+        if (debugDatabaseFactory == null &&
+            !await _keyStore.copyPassphrase(
+              sourceFileName: previousAccountName,
+              targetFileName: targetName,
+            )) {
+          throw StateError(
+            'Cannot safely isolate the saved account database: encryption key is missing.',
+          );
+        }
+        await File(previousAccount).copy(target);
+      } else if (!await File(previousAccount).exists() &&
+          await File(legacy).exists()) {
+        const legacyClaimKey = 'muthbat_legacy_database_claim_v1';
+        final legacyClaim = prefs.getString(legacyClaimKey);
+        final claimValue = '$_environmentNamespace:$userId';
+        if (legacyClaim == null || legacyClaim == claimValue) {
+          final old = await _factory.openDatabase(
+            legacy,
+            options: OpenDatabaseOptions(readOnly: true, singleInstance: false),
+          );
+          bool belongsToUser = false;
+          try {
+            final profiles = await old.query('local_profiles', columns: ['id']);
+            belongsToUser =
+                profiles.length == 1 && profiles.single['id'] == userId;
+          } finally {
+            await old.close();
+          }
+          if (belongsToUser) {
+            if (!await prefs.setString(legacyClaimKey, claimValue)) {
+              throw StateError('Unable to reserve legacy account storage.');
+            }
+            await File(legacy).copy(target);
+          }
+        }
       }
-      if (belongsToUser) await File(legacy).copy(target);
     }
     _accountId = userId;
     await database;
   }
 
-  Future<void> lockAccount() async {
+  Future<void> lockAccount() => _serializeAccountTransition(_lockAccount);
+
+  Future<void> _lockAccount() async {
+    await _waitForDatabaseOpen();
     await _database?.close();
     _database = null;
     _accountId = null;
   }
 
+  /// Reopens this account's database after another Flutter engine closed the
+  /// native sqflite connection while this isolate retained a stale handle.
+  Future<void> reopenAccount(String userId) =>
+      _serializeAccountTransition(() => _reopenAccount(userId));
+
+  Future<void> _reopenAccount(String userId) async {
+    await _waitForDatabaseOpen();
+    if (_accountId != userId) {
+      throw StateError('Account changed while recovering local storage');
+    }
+    final stale = _database;
+    _database = null;
+    try {
+      await stale?.close();
+    } catch (_) {
+      // A different engine may already have closed the native connection.
+    }
+    if (_accountId != userId) {
+      throw StateError('Account changed while recovering local storage');
+    }
+    await database;
+  }
+
+  Future<void> _waitForDatabaseOpen() async {
+    try {
+      await _openingDatabase;
+    } catch (_) {
+      // The caller opening the database receives the error. A failed open
+      // must not prevent locking or switching away from the account.
+    }
+  }
+
+  Future<T> _serializeAccountTransition<T>(Future<T> Function() operation) {
+    final previous = _accountTransition;
+    final gate = Completer<void>();
+    _accountTransition = gate.future;
+    return () async {
+      await previous;
+      try {
+        return await operation();
+      } finally {
+        gate.complete();
+      }
+    }();
+  }
+
   Future<Database> get database async {
     if (_accountId == null) throw StateError('Account storage is locked');
-    if (_database != null) return _database!;
-    _database = await _initDatabase();
-    return _database!;
+    final current = _database;
+    if (current != null && current.isOpen) return current;
+    // WorkManager runs in another Flutter engine. If that engine closed the
+    // native sqflite connection, discard the stale Dart handle and reopen the
+    // currently bound account database on demand.
+    _database = null;
+    // Startup services can request storage together. With singleInstance:false,
+    // separate opens would contend on migrations and SQLCipher initialization.
+    final opening = _openingDatabase ??= _initDatabase();
+    try {
+      final opened = await opening;
+      _database = opened;
+      return opened;
+    } finally {
+      if (identical(_openingDatabase, opening)) _openingDatabase = null;
+    }
   }
 
   Future<Database> _initDatabase() async {
     final dbPath = await _factory.getDatabasesPath();
     final fileName = _accountId == null
         ? _dbName
-        : 'muthbat_account_$_accountId.db';
+        : _accountFileName(_accountId!);
     final path = join(dbPath, fileName);
     final usingRealEncryption = debugDatabaseFactory == null;
 
@@ -171,6 +397,7 @@ class AppDatabase {
       return _factory.openDatabase(
         path,
         options: OpenDatabaseOptions(
+          singleInstance: false,
           version: _dbVersion,
           onCreate: _onCreate,
           onUpgrade: _onUpgrade,
@@ -187,6 +414,9 @@ class AppDatabase {
     return _factory.openDatabase(
       path,
       options: SqlCipherOpenDatabaseOptions(
+        // WorkManager has a separate Dart singleton but shares the native
+        // plugin. Its cleanup must never close the foreground connection.
+        singleInstance: false,
         password: passphrase,
         version: _dbVersion,
         onCreate: _onCreate,
@@ -224,6 +454,55 @@ class AppDatabase {
     }
     if (oldVersion < 9) {
       await _migrateToV9(db);
+    }
+    if (oldVersion < 10) await _migrateToV10(db);
+    if (oldVersion < 11) await _migrateToV11(db);
+    if (oldVersion < 12) await _migrateToV12(db);
+  }
+
+  Future<void> _migrateToV11(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS local_dispute_messages (
+        id TEXT PRIMARY KEY,
+        dispute_id TEXT NOT NULL,
+        sender_user_id TEXT NOT NULL,
+        message TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        sync_status TEXT NOT NULL DEFAULT 'synced',
+        client_request_id TEXT UNIQUE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_local_dispute_messages ON local_dispute_messages(dispute_id,created_at)',
+    );
+  }
+
+  Future<void> _migrateToV12(Database db) async {
+    await db.execute(
+      'ALTER TABLE local_dispute_messages ADD COLUMN sender_workspace TEXT',
+    );
+  }
+
+  Future<void> _migrateToV10(Database db) async {
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_customer_directory ON local_business_customers(business_id,is_archived,updated_at DESC,local_display_name ASC)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_currency_business ON local_customer_currency_balances(business_id,business_customer_id)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_queue_dependency ON offline_mutations_queue(depends_on_client_request_id)',
+    );
+    final rejected = await db.query(
+      'offline_mutations_queue',
+      columns: ['client_request_id'],
+      where:
+          "status='dead_letter' AND COALESCE(last_error_code,'') != 'dependency_failed'",
+    );
+    for (final row in rejected) {
+      final id = row['client_request_id'] as String;
+      await _setDirectoryFailure(db, id, 'dead_letter');
+      await _blockMutationDescendants(db, id);
     }
   }
 
@@ -707,6 +986,8 @@ class AppDatabase {
         created_at TEXT
       )
     ''');
+    await _migrateToV11(db);
+    await _migrateToV12(db);
 
     // 8. جدول تسوية المعرّفات المحلية مع معرّفات السيرفر
     await db.execute('''
@@ -737,6 +1018,47 @@ class AppDatabase {
         value TEXT
       )
     ''');
+    await _migrateToV10(db);
+  }
+
+  Future<List<Map<String, dynamic>>> getContactsNeedingRefresh(
+    String businessId,
+  ) async {
+    final db = await database;
+    return db.rawQuery(
+      '''SELECT c.id,c.updated_at FROM local_business_customers c
+      LEFT JOIN local_sync_state s ON s.key='contact:'||c.id
+      WHERE c.business_id=? AND c.is_archived=0 AND c.sync_status='synced'
+      AND (s.value IS NULL OR s.value != COALESCE(c.updated_at,'')) ORDER BY c.id''',
+      [businessId],
+    );
+  }
+
+  Future<void> cacheCustomerContacts(
+    String businessId,
+    List<Map<String, dynamic>> requested,
+    Map<String, String> phones,
+  ) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final row in requested) {
+        final id = row['id'] as String;
+        final version = row['updated_at'] as String? ?? '';
+        if (phones.containsKey(id)) {
+          await txn.update(
+            'local_business_customers',
+            {'phone': phones[id]},
+            where:
+                "id=? AND business_id=? AND sync_status='synced' AND COALESCE(updated_at,'')=?",
+            whereArgs: [id, businessId, version],
+          );
+        }
+        await txn.insert('local_sync_state', {
+          'key': 'contact:$id',
+          'value': version,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
   }
 
   // ==================== عمليات الملف الشخصي والمحل ====================
@@ -784,6 +1106,28 @@ class AppDatabase {
 
   Future<Map<String, dynamic>?> getBusinessByOwnerId(String ownerUserId) async {
     final db = await database;
+    // Honor the account-scoped workspace selected after a notebook import,
+    // including remembered/offline owner entry points.
+    final rawAccess = await getSyncStateValue('business_access_v1');
+    if (rawAccess != null) {
+      try {
+        final access = jsonDecode(rawAccess);
+        if (access is Map &&
+            access['user_id'] == ownerUserId &&
+            access['role'] == 'owner' &&
+            access['business_id'] is String) {
+          final selected = await db.query(
+            'local_businesses',
+            where: 'id = ? AND owner_user_id = ? AND is_active = 1',
+            whereArgs: [access['business_id'], ownerUserId],
+            limit: 1,
+          );
+          if (selected.isNotEmpty) return selected.first;
+        }
+      } on FormatException {
+        // A malformed UI preference cannot grant access or hide valid data.
+      }
+    }
     final results = await db.query(
       'local_businesses',
       where: 'owner_user_id = ? AND is_active = 1',
@@ -799,12 +1143,22 @@ class AppDatabase {
       final res = await getBusinessByOwnerId(ownerUserId);
       if (res != null) return res;
     }
+    if (ownerUserId == null || ownerUserId != _accountId) return null;
+    final raw = await getSyncStateValue('business_access_v1');
+    if (raw == null) return null;
+    final access = jsonDecode(raw);
+    if (access is! Map ||
+        access['user_id'] != ownerUserId ||
+        access['business_id'] is! String) {
+      return null;
+    }
     final results = await db.query(
       'local_businesses',
-      where: 'is_active = 1',
+      where: 'id = ? AND is_active = 1',
+      whereArgs: [access['business_id']],
       limit: 1,
     );
-    return results.isNotEmpty ? results.first : null;
+    return results.isEmpty ? null : results.first;
   }
 
   // ==================== عمليات العملاء (Customers) ====================
@@ -812,6 +1166,8 @@ class AppDatabase {
   Future<List<Map<String, dynamic>>> getBusinessCustomers(
     String businessId, {
     String? searchQuery,
+    int? limit,
+    int offset = 0,
   }) async {
     final db = await database;
     String whereClause = 'business_id = ? AND is_archived = 0';
@@ -827,7 +1183,9 @@ class AppDatabase {
       'local_business_customers',
       where: whereClause,
       whereArgs: whereArgs,
-      orderBy: 'updated_at DESC, local_display_name ASC',
+      orderBy: 'updated_at DESC, local_display_name ASC, id ASC',
+      limit: limit,
+      offset: offset,
     );
   }
 
@@ -850,51 +1208,73 @@ class AppDatabase {
   Future<void> upsertBusinessCustomer(
     Map<String, dynamic> customer, {
     bool fromServer = false,
+    DatabaseExecutor? executor,
   }) async {
-    final db = await database;
+    final db = executor ?? await database;
     final id = customer['id'] as String?;
 
     if (fromServer && id != null) {
-      final existing = await db.query(
-        'local_business_customers',
-        where: 'id = ?',
-        whereArgs: [id],
-        limit: 1,
-      );
+      return _writeTransaction(db, (txn) async {
+        final existing = await txn.query(
+          'local_business_customers',
+          where: 'id = ?',
+          whereArgs: [id],
+          limit: 1,
+        );
 
-      if (existing.isNotEmpty) {
-        final syncStatus =
-            (existing.first['sync_status'] as String?) ?? 'synced';
-        if (syncStatus.startsWith('pending')) {
-          // حماية السجل المعلق: تحديث الحقول المشتقة من السيرفر فقط
-          await db.update(
-            'local_business_customers',
-            {
-              'server_balance':
-                  (customer['current_balance'] as num?)?.toDouble() ?? 0.0,
-              'server_balance_minor': Money.fromNum(
-                customer['current_balance'] as num? ?? 0,
-              ).minorUnits,
-              'link_status':
-                  customer['link_status'] ?? existing.first['link_status'],
-            },
-            where: 'id = ?',
-            whereArgs: [id],
-          );
-          return;
+        final profileCommands = await txn.query(
+          'offline_mutations_queue',
+          columns: ['id'],
+          where: "local_ref_id=? AND command_type='mutate_customer_profile'",
+          whereArgs: [id],
+          limit: 1,
+        );
+        final pendingCustomer =
+            (profileCommands.isNotEmpty && existing.isNotEmpty) ||
+            existing.isNotEmpty &&
+                (existing.first['sync_status'] as String? ?? '').startsWith(
+                  'pending',
+                );
+        final row = pendingCustomer
+            ? Map<String, dynamic>.from(existing.first)
+            : Map<String, dynamic>.from(customer);
+        row['link_status'] = customer['link_status'] ?? row['link_status'];
+        if (profileCommands.isEmpty || customer['is_archived'] == 1) {
+          row['is_archived'] = customer['is_archived'] ?? row['is_archived'];
         }
-      }
-
-      final row = Map<String, dynamic>.from(customer);
-      row['server_balance'] =
-          (customer['current_balance'] as num?)?.toDouble() ?? 0.0;
-      _addCustomerMinorUnits(row);
-      await db.insert(
-        'local_business_customers',
-        row,
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
-      return;
+        // Phone is private directory data, absent from the public customer
+        // projection. Absence is not a request to erase the device's contact.
+        if (!customer.containsKey('phone') && existing.isNotEmpty) {
+          row['phone'] = existing.first['phone'];
+        }
+        row['server_balance'] =
+            (customer['current_balance'] as num?)?.toDouble() ?? 0.0;
+        final business = await txn.query(
+          'local_businesses',
+          columns: ['currency_code'],
+          where: 'id=?',
+          whereArgs: [customer['business_id']],
+          limit: 1,
+        );
+        final base = business.isEmpty
+            ? 'YER'
+            : business.first['currency_code'] as String? ?? 'YER';
+        final delta = await _pendingDelta(txn, id, base);
+        final displayed = Money.fromMinorUnits(
+          Money.fromNum(customer['current_balance'] as num? ?? 0).minorUnits +
+              delta.$1,
+        ).toDouble();
+        row['current_balance'] = displayed;
+        row['amount_customer_owes'] = displayed > 0 ? displayed : 0.0;
+        row['amount_business_owes_customer'] = displayed < 0 ? -displayed : 0.0;
+        _addCustomerMinorUnits(row);
+        await txn.insert(
+          'local_business_customers',
+          row,
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+        return;
+      });
     }
 
     final row = Map<String, dynamic>.from(customer);
@@ -921,6 +1301,31 @@ class AppDatabase {
     }
   }
 
+  Future<(int, int, int, int)> _pendingDelta(
+    DatabaseExecutor db,
+    String customerId,
+    String currency,
+  ) async {
+    final rows = await db.query(
+      'local_ledger_entries',
+      where:
+          "business_customer_id=? AND currency_code=? AND (sync_status LIKE 'pending%' OR sync_status IN ('failed','blocked'))",
+      whereArgs: [customerId, currency],
+    );
+    var debit = 0, credit = 0;
+    for (final row in rows) {
+      final amount =
+          (row['amount_minor'] as num?)?.toInt() ??
+          Money.fromNum(row['amount'] as num).minorUnits;
+      if (row['direction'] == 'debit') {
+        debit += amount;
+      } else {
+        credit += amount;
+      }
+    }
+    return (debit - credit, debit, credit, rows.length);
+  }
+
   // ==================== أرصدة العملات المتعددة للعملاء ====================
 
   Future<Map<String, double>> getCustomerCurrencyBalances(
@@ -942,6 +1347,35 @@ class AppDatabase {
           : Money.fromMinorUnits(minor).toDouble();
     }
     return balances;
+  }
+
+  /// One indexed scan for the whole directory, rather than N per-customer reads.
+  Future<Map<String, Map<String, double>>> getBusinessCurrencyBalances(
+    String businessId, {
+    List<String>? customerIds,
+  }) async {
+    final db = await database;
+    final rows = await db.query(
+      'local_customer_currency_balances',
+      columns: [
+        'business_customer_id',
+        'currency_code',
+        'current_balance_minor',
+        'current_balance',
+      ],
+      where:
+          'business_id=?${customerIds == null ? '' : ' AND business_customer_id IN (${List.filled(customerIds.length, '?').join(',')})'}',
+      whereArgs: [businessId, ...?customerIds],
+    );
+    final result = <String, Map<String, double>>{};
+    for (final row in rows) {
+      final minor = (row['current_balance_minor'] as num?)?.toInt();
+      (result[row['business_customer_id'] as String] ??=
+          {})[(row['currency_code'] as String).toUpperCase()] = minor == null
+          ? (row['current_balance'] as num? ?? 0).toDouble()
+          : Money.fromMinorUnits(minor).toDouble();
+    }
+    return result;
   }
 
   Future<List<CurrencyInfo>> getCurrencies() async {
@@ -991,46 +1425,106 @@ class AppDatabase {
     );
   }
 
+  Future<int> countActiveCustomers(String businessId) async {
+    final db = await database;
+    return Sqflite.firstIntValue(
+          await db.rawQuery(
+            'SELECT COUNT(*) FROM local_business_customers WHERE business_id=? AND is_archived=0',
+            [businessId],
+          ),
+        ) ??
+        0;
+  }
+
+  Future<List<Map<String, dynamic>>> getActiveCustomerTotals(
+    String businessId,
+    String baseCurrency,
+  ) async {
+    final db = await database;
+    return db.rawQuery(
+      '''WITH amounts AS (
+      SELECT b.currency_code,COALESCE(b.current_balance_minor,ROUND(b.current_balance*10000)) minor
+      FROM local_customer_currency_balances b JOIN local_business_customers c ON c.id=b.business_customer_id
+      WHERE c.business_id=? AND c.is_archived=0
+      UNION ALL SELECT ?,COALESCE(c.current_balance_minor,ROUND(c.current_balance*10000))
+      FROM local_business_customers c WHERE c.business_id=? AND c.is_archived=0
+      AND NOT EXISTS(SELECT 1 FROM local_customer_currency_balances b WHERE b.business_customer_id=c.id)
+    ) SELECT currency_code,
+      SUM(CASE WHEN minor>0 THEN minor ELSE 0 END)/10000.0 receivables,
+      SUM(CASE WHEN minor<0 THEN -minor ELSE 0 END)/10000.0 payables,
+      SUM(CASE WHEN minor!=0 THEN 1 ELSE 0 END) customers FROM amounts GROUP BY currency_code''',
+      [businessId, baseCurrency, businessId],
+    );
+  }
+
   /// كتابة أرصدة العملات القادمة من السيرفر (Server-wins) مع حماية
   /// أرصدة العملاء الذين لديهم قيود تفاؤلية معلقة لم تُزامَن بعد.
   Future<void> upsertCurrencyBalancesFromServer(
     String businessId,
-    List<Map<String, dynamic>> rows,
-  ) async {
-    final db = await database;
-    await db.transaction((txn) async {
+    List<Map<String, dynamic>> rows, {
+    DatabaseExecutor? executor,
+  }) async {
+    final db = executor ?? await database;
+    await _writeTransaction(db, (txn) async {
+      final pending = await txn.rawQuery(
+        '''SELECT business_customer_id,currency_code,
+        SUM(CASE WHEN direction='debit' THEN COALESCE(amount_minor,ROUND(amount*10000)) ELSE 0 END) AS debit,
+        SUM(CASE WHEN direction='credit' THEN COALESCE(amount_minor,ROUND(amount*10000)) ELSE 0 END) AS credit,
+        COUNT(*) AS count FROM local_ledger_entries WHERE business_id=?
+        AND (sync_status LIKE 'pending%' OR sync_status IN ('failed','blocked'))
+        GROUP BY business_customer_id,currency_code''',
+        [businessId],
+      );
+      final deltas = <String, (int, int, int, int)>{};
+      for (final row in pending) {
+        final debit = (row['debit'] as num).toInt(),
+            credit = (row['credit'] as num).toInt();
+        deltas['${row['business_customer_id']}:${row['currency_code']}'] = (
+          debit - credit,
+          debit,
+          credit,
+          (row['count'] as num).toInt(),
+        );
+      }
       for (final row in rows) {
         final custId = row['business_customer_id'] as String?;
         if (custId == null) continue;
 
-        final pending = await txn.rawQuery(
-          "SELECT COUNT(*) AS c FROM local_ledger_entries "
-          "WHERE business_customer_id = ? AND currency_code = ? AND sync_status LIKE 'pending%'",
-          [custId, (row['currency_code'] as String?)?.toUpperCase() ?? 'YER'],
-        );
-        if ((Sqflite.firstIntValue(pending) ?? 0) > 0) continue;
-
         final currency =
             (row['currency_code'] as String?)?.toUpperCase() ?? 'YER';
-        final serverBalance =
-            (row['current_balance'] as num?)?.toDouble() ?? 0.0;
+        final delta = deltas['$custId:$currency'] ?? (0, 0, 0, 0);
+        final serverBalance = Money.fromMinorUnits(
+          Money.fromNum(row['current_balance'] as num? ?? 0).minorUnits +
+              delta.$1,
+        ).toDouble();
         final serverDebits = (row['total_debits'] as num?)?.toDouble() ?? 0.0;
         final serverCredits = (row['total_credits'] as num?)?.toDouble() ?? 0.0;
-        await txn.insert('local_customer_currency_balances', {
-          'id': 'bal-$custId-$currency',
-          'business_id': businessId,
-          'business_customer_id': custId,
-          'currency_code': currency,
-          'current_balance': serverBalance,
-          'current_balance_minor': Money.fromNum(serverBalance).minorUnits,
-          'total_debits': serverDebits,
-          'total_debits_minor': Money.fromNum(serverDebits).minorUnits,
-          'total_credits': serverCredits,
-          'total_credits_minor': Money.fromNum(serverCredits).minorUnits,
-          'entry_count': (row['entry_count'] as num?)?.toInt() ?? 0,
-          'last_entry_at': row['last_entry_at'],
-          'updated_at': DateTime.now().toIso8601String(),
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert(
+          'local_customer_currency_balances',
+          {
+            'id': 'bal-$custId-$currency',
+            'business_id': businessId,
+            'business_customer_id': custId,
+            'currency_code': currency,
+            'current_balance': serverBalance,
+            'current_balance_minor': Money.fromNum(serverBalance).minorUnits,
+            'total_debits': Money.fromMinorUnits(
+              Money.fromNum(serverDebits).minorUnits + delta.$2,
+            ).toDouble(),
+            'total_debits_minor':
+                Money.fromNum(serverDebits).minorUnits + delta.$2,
+            'total_credits': Money.fromMinorUnits(
+              Money.fromNum(serverCredits).minorUnits + delta.$3,
+            ).toDouble(),
+            'total_credits_minor':
+                Money.fromNum(serverCredits).minorUnits + delta.$3,
+            'entry_count':
+                ((row['entry_count'] as num?)?.toInt() ?? 0) + delta.$4,
+            'last_entry_at': row['last_entry_at'],
+            'updated_at': DateTime.now().toIso8601String(),
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
       }
     });
   }
@@ -1072,6 +1566,19 @@ class AppDatabase {
     );
   }
 
+  Future<List<Map<String, dynamic>>> getBusinessLedgerEntriesSince(
+    String businessId,
+    DateTime since,
+  ) async {
+    final db = await database;
+    return db.query(
+      'local_ledger_entries',
+      where: 'business_id = ? AND julianday(occurred_at) >= julianday(?)',
+      whereArgs: [businessId, since.toIso8601String()],
+      orderBy: 'occurred_at DESC, created_at DESC',
+    );
+  }
+
   /// حفظ قيد تفاؤلي + تحديث الأرصدة + إدراج أمر في الطابور (معاملة واحدة).
   Future<void> saveLedgerEntryOptimistic({
     required Map<String, dynamic> entry,
@@ -1079,20 +1586,67 @@ class AppDatabase {
     required Map<String, dynamic> payload,
     String? dependsOnClientRequestId,
     Map<String, dynamic>? dependentMutation,
+    String? reversalOfEntryId,
   }) async {
     final db = await database;
     await db.transaction((txn) async {
+      final customer = await txn.query(
+        'local_business_customers',
+        columns: ['is_archived'],
+        where: 'id=?',
+        whereArgs: [entry['business_customer_id']],
+        limit: 1,
+      );
+      if (customer.isNotEmpty && customer.first['is_archived'] == 1) {
+        throw StateError('العميل مؤرشف؛ لا يمكن إضافة حركة جديدة');
+      }
+      if (reversalOfEntryId != null) {
+        final originals = await txn.query(
+          'local_ledger_entries',
+          where: 'id = ?',
+          whereArgs: [reversalOfEntryId],
+          limit: 1,
+        );
+        if (originals.isEmpty) {
+          throw StateError('القيد الأصلي غير موجود على هذا الجهاز');
+        }
+        final original = originals.single;
+        final originalAmount = Money.fromNum(
+          (original['amount'] as num).toDouble(),
+        );
+        final reversalAmount = Money.fromNum(
+          (entry['amount'] as num).toDouble(),
+        );
+        if (original['business_id'] != entry['business_id'] ||
+            original['business_customer_id'] != entry['business_customer_id'] ||
+            original['currency_code'] != entry['currency_code'] ||
+            original['direction'] == entry['direction'] ||
+            originalAmount.minorUnits != reversalAmount.minorUnits ||
+            original['entry_type'] == 'reversal' ||
+            original['sync_status'] != 'synced' ||
+            original['is_reversed'] == 1) {
+          throw StateError(
+            'لا يمكن عكس هذا القيد؛ تحقق من العملة وحالة المزامنة',
+          );
+        }
+        await txn.update(
+          'local_ledger_entries',
+          {'is_reversed': 1},
+          where: 'id = ?',
+          whereArgs: [reversalOfEntryId],
+        );
+      }
       // إذا أضيف القيد لعميل محلي جديد، اجعله يعتمد على أمر إنشاء العميل.
       // هذا يمنع سباق إرسال الدين قبل حصول العميل على معرّفه الخادمي.
       String? effectiveDependency = dependsOnClientRequestId;
       if (effectiveDependency == null) {
         final customerId = entry['business_customer_id'] as String?;
-        if (customerId != null && customerId.startsWith('cust-')) {
+        if (customerId != null) {
           final parent = await txn.query(
             'offline_mutations_queue',
             columns: ['client_request_id'],
             where:
-                "local_ref_id = ? AND command_type IN ('customer_directory', 'add_business_customer', 'pending_directory')",
+                "local_ref_id = ? AND command_type IN ('customer_directory', 'add_business_customer', 'pending_directory','mutate_customer_profile')",
             whereArgs: [customerId],
             orderBy: 'id DESC',
             limit: 1,
@@ -1197,22 +1751,26 @@ class AppDatabase {
         }
       }
 
-      await txn.insert('local_customer_currency_balances', {
-        'id': 'bal-$custId-$currency',
-        'business_id': businessId,
-        'business_customer_id': custId,
-        'currency_code': currency,
-        'current_balance': Money.fromMinorUnits(currBalMinor).toDouble(),
-        'current_balance_minor': currBalMinor,
-        'total_debits': Money.fromMinorUnits(debitsMinor).toDouble(),
-        'total_debits_minor': debitsMinor,
-        'total_credits': Money.fromMinorUnits(creditsMinor).toDouble(),
-        'total_credits_minor': creditsMinor,
-        'entry_count': count + 1,
-        'last_entry_at':
-            entry['occurred_at'] ?? DateTime.now().toIso8601String(),
-        'updated_at': DateTime.now().toIso8601String(),
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.insert(
+        'local_customer_currency_balances',
+        {
+          'id': 'bal-$custId-$currency',
+          'business_id': businessId,
+          'business_customer_id': custId,
+          'currency_code': currency,
+          'current_balance': Money.fromMinorUnits(currBalMinor).toDouble(),
+          'current_balance_minor': currBalMinor,
+          'total_debits': Money.fromMinorUnits(debitsMinor).toDouble(),
+          'total_debits_minor': debitsMinor,
+          'total_credits': Money.fromMinorUnits(creditsMinor).toDouble(),
+          'total_credits_minor': creditsMinor,
+          'entry_count': count + 1,
+          'last_entry_at':
+              entry['occurred_at'] ?? DateTime.now().toIso8601String(),
+          'updated_at': DateTime.now().toIso8601String(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
 
       // 3. تحديث الرصيد المسطح الافتراضي في جدول العميل (للتوافق القديم)
       final custRows = await txn.query(
@@ -1284,28 +1842,30 @@ class AppDatabase {
           'created_at': DateTime.now().toIso8601String(),
         }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
+      if (effectiveDependency != null) {
+        final parent = await txn.query(
+          'offline_mutations_queue',
+          columns: ['status'],
+          where: 'client_request_id=?',
+          whereArgs: [effectiveDependency],
+        );
+        if (parent.isNotEmpty && parent.first['status'] == 'dead_letter') {
+          await _blockMutationDescendants(txn, effectiveDependency);
+        }
+      }
     });
   }
 
   /// كتابة قيد قادم من السيرفر (Server-wins، append-only) مع حماية
   /// القيود التفاؤلية المعلقة (نفس client_request_id بحالة pending).
-  Future<void> upsertLedgerEntryFromServer(Map<String, dynamic> row) async {
-    final db = await database;
+  Future<void> upsertLedgerEntryFromServer(
+    Map<String, dynamic> row, {
+    DatabaseExecutor? executor,
+  }) async {
+    final db = executor ?? await database;
     final crid = row['client_request_id'] as String?;
 
-    if (crid != null) {
-      final local = await db.query(
-        'local_ledger_entries',
-        where: 'client_request_id = ?',
-        whereArgs: [crid],
-        limit: 1,
-      );
-      if (local.isNotEmpty) {
-        final status = (local.first['sync_status'] as String?) ?? '';
-        if (status.startsWith('pending')) return; // حماية القيد التفاؤلي
-      }
-    }
-
+    // A server row confirms acceptance even if the command response was lost.
     await db.insert('local_ledger_entries', {
       'id': row['id'],
       'business_id': row['business_id'],
@@ -1451,6 +2011,19 @@ class AppDatabase {
         where: 'client_request_id = ?',
         whereArgs: [clientRequestId],
       );
+      await txn.update(
+        'local_dispute_messages',
+        {'sync_status': 'failed'},
+        where: 'client_request_id = ?',
+        whereArgs: [clientRequestId],
+      );
+      await txn.update(
+        'local_dispute_messages',
+        {'sync_status': 'dead_letter'},
+        where: 'client_request_id = ?',
+        whereArgs: [clientRequestId],
+      );
+      await _setDirectoryFailure(txn, clientRequestId, 'failed');
     });
   }
 
@@ -1481,15 +2054,150 @@ class AppDatabase {
         where: 'client_request_id = ?',
         whereArgs: [clientRequestId],
       );
+      await txn.update(
+        'local_dispute_messages',
+        {'sync_status': 'dead_letter'},
+        where: 'client_request_id = ?',
+        whereArgs: [clientRequestId],
+      );
+      await _setDirectoryFailure(txn, clientRequestId, 'dead_letter');
+      await _blockMutationDescendants(txn, clientRequestId);
     });
+  }
+
+  Future<void> rollbackRejectedBusinessCurrencies(
+    String businessId,
+    String requested,
+    String previous,
+  ) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final row = await txn.query(
+        'local_businesses',
+        columns: ['additional_currencies'],
+        where: 'id=?',
+        whereArgs: [businessId],
+        limit: 1,
+      );
+      if (row.isNotEmpty && row.first['additional_currencies'] == requested) {
+        await txn.update(
+          'local_businesses',
+          {'additional_currencies': previous},
+          where: 'id=?',
+          whereArgs: [businessId],
+        );
+      }
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getLocalDisputeMessages(
+    String disputeId,
+  ) async {
+    final db = await database;
+    return db.query(
+      'local_dispute_messages',
+      where: 'dispute_id=?',
+      whereArgs: [disputeId],
+      orderBy: 'created_at ASC',
+    );
+  }
+
+  Future<void> saveDisputeMessage(Map<String, dynamic> message) async {
+    final db = await database;
+    await db.insert(
+      'local_dispute_messages',
+      message,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> reconcileDisputeMessage(
+    String requestId,
+    String serverId,
+  ) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'local_dispute_messages',
+        where: 'client_request_id=?',
+        whereArgs: [requestId],
+        limit: 1,
+      );
+      if (rows.isNotEmpty) {
+        await txn.update(
+          'local_dispute_messages',
+          {'id': serverId, 'sync_status': 'synced'},
+          where: 'client_request_id=?',
+          whereArgs: [requestId],
+        );
+      }
+    });
+  }
+
+  Future<void> _blockMutationDescendants(
+    DatabaseExecutor txn,
+    String clientRequestId,
+  ) async {
+    final descendants = await _mutationDescendants(txn, clientRequestId);
+    for (final child in descendants) {
+      // Keep the financial row and its amount; it is waiting on its parent.
+      await txn.update(
+        'offline_mutations_queue',
+        {
+          'status': 'dead_letter',
+          'last_error_code': 'dependency_failed',
+          'last_error':
+              'توقفت المزامنة بسبب فشل العملية السابقة. القيد محفوظ محليًا؛ أعد محاولة العملية الأصلية لاستئنافه.',
+          'next_retry_at': null,
+        },
+        where: "client_request_id=? AND status != 'dead_letter'",
+        whereArgs: [child],
+      );
+      await txn.update(
+        'local_ledger_entries',
+        {'sync_status': 'blocked'},
+        where:
+            "client_request_id=? AND sync_status != 'synced' AND sync_status != 'dead_letter'",
+        whereArgs: [child],
+      );
+    }
+  }
+
+  Future<void> _setDirectoryFailure(
+    DatabaseExecutor db,
+    String requestId,
+    String status,
+  ) async {
+    await db.rawUpdate(
+      '''UPDATE local_business_customers SET sync_status=?
+      WHERE id IN (SELECT local_ref_id FROM offline_mutations_queue
+      WHERE client_request_id=? AND command_type IN ('customer_directory','pending_directory','add_business_customer','mutate_customer_profile'))''',
+      [status, requestId],
+    );
+  }
+
+  Future<List<String>> _mutationDescendants(
+    DatabaseExecutor db,
+    String root,
+  ) async {
+    final rows = await db.rawQuery(
+      '''WITH RECURSIVE descendants(request_id) AS (
+      SELECT client_request_id FROM offline_mutations_queue WHERE depends_on_client_request_id=?
+      UNION SELECT q.client_request_id FROM offline_mutations_queue q
+      JOIN descendants d ON q.depends_on_client_request_id=d.request_id)
+      SELECT request_id FROM descendants''',
+      [root],
+    );
+    return rows.map((row) => row['request_id'] as String).toList();
   }
 
   Future<List<Map<String, dynamic>>> getDeadLetterMutations() async {
     final db = await database;
-    return await db.query(
-      'offline_mutations_queue',
-      where: "status = 'dead_letter'",
-      orderBy: 'id ASC',
+    return db.rawQuery(
+      '''SELECT q.*,
+      (SELECT local_display_name FROM local_business_customers WHERE id=q.local_ref_id) AS customer_name,
+      (SELECT COUNT(*) FROM offline_mutations_queue c WHERE c.depends_on_client_request_id=q.client_request_id) AS dependent_count
+      FROM offline_mutations_queue q WHERE q.status='dead_letter' ORDER BY q.id ASC''',
     );
   }
 
@@ -1518,6 +2226,45 @@ class AppDatabase {
   Future<void> retryDeadLetterMutation(String clientRequestId) async {
     final db = await database;
     await db.transaction((txn) async {
+      // Retrying a blocked child repairs its original dependency first.
+      var root = clientRequestId;
+      final visited = <String>{};
+      while (visited.add(root)) {
+        final row = await txn.query(
+          'offline_mutations_queue',
+          where: 'client_request_id=?',
+          whereArgs: [root],
+        );
+        if (row.isEmpty ||
+            row.first['last_error_code'] != 'dependency_failed') {
+          break;
+        }
+        final parent = row.first['depends_on_client_request_id'] as String?;
+        if (parent == null) break;
+        root = parent;
+      }
+      final descendants = await _mutationDescendants(txn, root);
+      for (final child in descendants) {
+        await txn.update(
+          'offline_mutations_queue',
+          {
+            'status': 'pending',
+            'attempt_count': 0,
+            'last_error': null,
+            'last_error_code': null,
+            'next_retry_at': null,
+          },
+          where: "client_request_id=? AND last_error_code='dependency_failed'",
+          whereArgs: [child],
+        );
+        await txn.update(
+          'local_ledger_entries',
+          {'sync_status': 'pending_insert'},
+          where: "client_request_id=? AND sync_status='blocked'",
+          whereArgs: [child],
+        );
+      }
+      clientRequestId = root;
       await txn.update(
         'offline_mutations_queue',
         {
@@ -1536,6 +2283,7 @@ class AppDatabase {
         where: 'client_request_id = ?',
         whereArgs: [clientRequestId],
       );
+      await _setDirectoryFailure(txn, clientRequestId, 'pending_directory');
     });
   }
 
@@ -1637,6 +2385,161 @@ class AppDatabase {
     return rows.isNotEmpty ? rows.first['server_id'] as String? : null;
   }
 
+  Future<Map<String, dynamic>> resolveMutationReferences(
+    Map<String, dynamic> payload,
+  ) async {
+    final db = await database;
+    final mappings = await db.query('local_id_map');
+    dynamic resolved = payload;
+    for (final mapping in mappings) {
+      resolved = replaceReconciledIdDeep(
+        resolved,
+        mapping['local_id'] as String,
+        mapping['server_id'] as String,
+      );
+    }
+    return Map<String, dynamic>.from(resolved as Map);
+  }
+
+  Future<void> applyRemoteLedgerStates(
+    String businessId,
+    List<Map<String, dynamic>> rows, {
+    DatabaseExecutor? executor,
+  }) async {
+    final db = executor ?? await database;
+    await _writeTransaction(db, (txn) async {
+      for (final row in rows) {
+        if (row['entry_id'] is! String ||
+            row['confirmation_status'] is! String ||
+            row['dispute_status'] is! String ||
+            row['is_reversed'] is! bool) {
+          throw StateError('Invalid ledger state response');
+        }
+        await txn.update(
+          'local_ledger_entries',
+          {
+            'confirmation_status': row['confirmation_status'],
+            'dispute_status': row['dispute_status'],
+            'is_reversed': row['is_reversed'] == true ? 1 : 0,
+          },
+          where: 'id=? AND business_id=?',
+          whereArgs: [row['entry_id'], businessId],
+        );
+      }
+    });
+  }
+
+  Future<void> applyMerchantSnapshot(
+    String businessId,
+    List<Map<String, dynamic>> items, {
+    String? snapshotId,
+  }) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final entries = items
+          .where((r) => r['kind'] == 'entry')
+          .map((r) => Map<String, dynamic>.from(r['payload'] as Map))
+          .toList();
+      for (final row in entries) {
+        if (row['business_id'] != businessId) {
+          throw StateError('Snapshot business mismatch');
+        }
+        await upsertLedgerEntryFromServer(row, executor: txn);
+      }
+      final states = items
+          .where((r) => r['kind'] == 'state')
+          .map((r) => Map<String, dynamic>.from(r['payload'] as Map))
+          .toList();
+      await applyRemoteLedgerStates(businessId, states, executor: txn);
+      for (final item in items.where((r) => r['kind'] == 'customer')) {
+        final c = Map<String, dynamic>.from(item['payload'] as Map);
+        if (c['business_id'] != businessId) {
+          throw StateError('Snapshot business mismatch');
+        }
+        final current = (c['current_balance'] as num? ?? 0).toDouble();
+        await upsertBusinessCustomer(
+          {
+            'id': c['id'],
+            'business_id': businessId,
+            'customer_id': c['customer_id'],
+            'local_display_name': c['local_display_name'],
+            'local_note': c['local_note'],
+            'credit_limit': c['credit_limit'],
+            'default_due_days': c['default_due_days'],
+            'link_status': c['link_status'],
+            'current_balance': current,
+            'amount_customer_owes': current > 0 ? current : 0,
+            'amount_business_owes_customer': current < 0 ? -current : 0,
+            'overdue_balance': c['overdue_balance'] ?? 0,
+            'is_archived': c['is_archived'] == true ? 1 : 0,
+            'sync_status': 'synced',
+            'created_at': c['created_at'],
+            'updated_at': c['updated_at'],
+          },
+          fromServer: true,
+          executor: txn,
+        );
+      }
+      final balances = items
+          .where((r) => r['kind'] == 'balance')
+          .map((r) => Map<String, dynamic>.from(r['payload'] as Map))
+          .toList();
+      final existingBalances = await txn.query(
+        'local_customer_currency_balances',
+        columns: ['business_customer_id', 'currency_code'],
+        where: 'business_id=?',
+        whereArgs: [businessId],
+      );
+      final keys = balances
+          .map((r) => '${r['business_customer_id']}:${r['currency_code']}')
+          .toSet();
+      for (final existing in existingBalances) {
+        if (keys.add(
+          '${existing['business_customer_id']}:${existing['currency_code']}',
+        )) {
+          balances.add({
+            ...existing,
+            'business_id': businessId,
+            'current_balance': 0,
+            'total_debits': 0,
+            'total_credits': 0,
+            'entry_count': 0,
+          });
+        }
+      }
+      if (balances.any((r) => r['business_id'] != businessId)) {
+        throw StateError('Snapshot business mismatch');
+      }
+      await upsertCurrencyBalancesFromServer(
+        businessId,
+        balances,
+        executor: txn,
+      );
+      final dates = entries.map((r) => r['created_at'] as String).toList()
+        ..sort();
+      final old = await txn.query(
+        'local_sync_checkpoints',
+        where: 'business_id=?',
+        whereArgs: [businessId],
+      );
+      if (dates.isNotEmpty &&
+          (old.isEmpty ||
+              dates.last.compareTo(old.first['cursor_value'] as String) > 0)) {
+        await txn.insert('local_sync_checkpoints', {
+          'business_id': businessId,
+          'cursor_value': dates.last,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      if (snapshotId != null) {
+        await txn.insert('local_sync_state', {
+          'key': 'snapshot:$businessId',
+          'value': snapshotId,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
   /// تسوية المنشأة التي أُنشئت دون اتصال. لا يكفي تغيير المفتاح في جدول
   /// المنشآت؛ كل أمر محفوظ بعده قد يحتوي `biz-*` داخل حمولة JSON.
   Future<void> reconcileBusinessId({
@@ -1696,8 +2599,8 @@ class AppDatabase {
         where: 'business_id = ?',
         whereArgs: [localId],
       );
+      await _rewritePayloadsForReconciledId(txn, localId, serverId);
     });
-    await _rewritePayloadsForReconciledId(localId, serverId);
   }
 
   /// تسوية معرّف عميل محلي (cust-*) بمعرّف السيرفر بعد نجاح الإنشاء:
@@ -1723,6 +2626,22 @@ class AppDatabase {
       );
 
       if (serverRowExists.isNotEmpty) {
+        final localRows = await txn.query(
+          'local_business_customers',
+          where: 'id = ?',
+          whereArgs: [localId],
+          limit: 1,
+        );
+        if (localRows.isNotEmpty &&
+            serverRowExists.first['phone'] == null &&
+            localRows.first['phone'] != null) {
+          await txn.update(
+            'local_business_customers',
+            {'phone': localRows.first['phone']},
+            where: 'id = ?',
+            whereArgs: [serverId],
+          );
+        }
         // السيرفر سُحب مسبقاً — السيرفر يكسب ويُحذف الصف المحلي المكرر
         await txn.delete(
           'local_business_customers',
@@ -1759,9 +2678,8 @@ class AppDatabase {
           whereArgs: [bal['id']],
         );
       }
+      await _rewritePayloadsForReconciledId(txn, localId, serverId);
     });
-
-    await _rewritePayloadsForReconciledId(localId, serverId);
   }
 
   /// تسوية معرّف قيد محلي (entry-*) بمعرّف السيرفر بعد نجاح الإرسال.
@@ -1806,35 +2724,62 @@ class AppDatabase {
         where: 'entry_id = ?',
         whereArgs: [localId],
       );
+      await _rewritePayloadsForReconciledId(txn, localId, serverId);
     });
-
-    await _rewritePayloadsForReconciledId(localId, serverId);
   }
 
   /// إعادة كتابة المعرّفات المحلية في حمولات الأوامر المعلقة بعد التسوية
   /// (مثلاً p_business_customer_id / p_entry_id للأوامر المعتمدة).
   Future<void> _rewritePayloadsForReconciledId(
+    DatabaseExecutor db,
     String localId,
     String serverId,
   ) async {
-    final db = await database;
+    final preferences = await db.query(
+      'local_sync_state',
+      where: 'key = ?',
+      whereArgs: ['business_access_v1'],
+    );
+    for (final preference in preferences) {
+      final raw = preference['value'] as String?;
+      if (raw == null || !raw.contains(localId)) continue;
+      await db.update(
+        'local_sync_state',
+        {
+          'value': jsonEncode(
+            replaceReconciledIdDeep(jsonDecode(raw), localId, serverId),
+          ),
+        },
+        where: 'key = ?',
+        whereArgs: [preference['key']],
+      );
+    }
+    await db.update(
+      'offline_mutations_queue',
+      {'local_ref_id': serverId},
+      where: 'local_ref_id=?',
+      whereArgs: [localId],
+    );
     final rows = await db.query('offline_mutations_queue');
     for (final row in rows) {
       final payloadJson = row['payload_json'] as String?;
       if (payloadJson == null || !payloadJson.contains(localId)) continue;
 
+      dynamic decoded;
       try {
-        final decoded = jsonDecode(payloadJson);
-        final rewritten = replaceReconciledIdDeep(decoded, localId, serverId);
-        await db.update(
-          'offline_mutations_queue',
-          {'payload_json': jsonEncode(rewritten)},
-          where: 'client_request_id = ?',
-          whereArgs: [row['client_request_id']],
-        );
-      } catch (_) {
-        // حمولة تالفة تُترك كما هي — ستُصنَّف dead_letter عند الإرسال
+        decoded = jsonDecode(payloadJson);
+      } on FormatException {
+        // A corrupt command is handled by the sender, not silently discarded.
+        continue;
       }
+      final rewritten = replaceReconciledIdDeep(decoded, localId, serverId);
+      // Storage errors must abort the encompassing ID reconciliation transaction.
+      await db.update(
+        'offline_mutations_queue',
+        {'payload_json': jsonEncode(rewritten)},
+        where: 'client_request_id = ?',
+        whereArgs: [row['client_request_id']],
+      );
     }
   }
 

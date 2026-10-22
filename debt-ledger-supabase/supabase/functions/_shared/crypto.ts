@@ -79,6 +79,27 @@ export async function encryptPhone(phone: string): Promise<string> {
   return `\\x${Array.from(payload, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
+export async function decryptPhone(ciphertext: string, keyVersion: number): Promise<string> {
+  const currentVersion = Number(Deno.env.get("PHONE_KEY_VERSION") ?? "1");
+  const keyValue = keyVersion === currentVersion
+    ? await keyValueForLocalRuntime("PHONE_ENCRYPTION_KEY")
+    : Deno.env.get(`PHONE_ENCRYPTION_KEY_V${keyVersion}`);
+  if (!keyValue) throw new Error("missing_phone_decryption_key");
+  const hex = ciphertext.replace(/^\\+x/, "");
+  if (!/^(?:[a-f0-9]{2})+$/i.test(hex) || hex.length < 58) throw new Error("invalid_phone_ciphertext");
+  let payload = Uint8Array.from(hex.match(/../g)!, (pair) => Number.parseInt(pair, 16));
+  // Older writers sent a doubly escaped bytea prefix. PostgreSQL stored the
+  // literal hex text; unwrap that legacy representation before AES-GCM.
+  const legacy = new TextDecoder().decode(payload);
+  if (/^\\+x(?:[a-f0-9]{2})+$/i.test(legacy)) {
+    const legacyHex = legacy.replace(/^\\+x/, "");
+    payload = Uint8Array.from(legacyHex.match(/../g)!, (pair) => Number.parseInt(pair,16));
+  }
+  const key = await crypto.subtle.importKey("raw", asArrayBuffer(fromBase64(keyValue)), { name: "AES-GCM" }, false, ["decrypt"]);
+  const value = await crypto.subtle.decrypt({ name: "AES-GCM", iv: asArrayBuffer(payload.slice(0,12)) }, key, asArrayBuffer(payload.slice(12)));
+  return normalizeE164(new TextDecoder().decode(value));
+}
+
 export async function sha256Hex(data: ArrayBuffer): Promise<string> {
   return toHex(await crypto.subtle.digest("SHA-256", data));
 }

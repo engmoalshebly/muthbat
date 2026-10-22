@@ -22,10 +22,46 @@ class AppTheme {
         secondaryContainer: AppColors.secondaryContainer,
         surface: AppColors.surfaceLight,
         onSurface: AppColors.textPrimary,
+        onSurfaceVariant: AppColors.textSecondary,
+        outline: AppColors.borderMedium,
+        outlineVariant: AppColors.borderLight,
+        surfaceContainerLow: AppColors.surfaceContainerSoft,
+        surfaceContainerHighest: AppColors.surfaceContainerStrong,
         error: AppColors.error,
         onError: AppColors.textWhite,
       ),
       fontFamily: AppTypography.arabicFontFamily,
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(foregroundColor: AppColors.primary),
+      ),
+      progressIndicatorTheme: const ProgressIndicatorThemeData(
+        color: AppColors.primary,
+        linearTrackColor: AppColors.primaryContainer,
+      ),
+      segmentedButtonTheme: SegmentedButtonThemeData(
+        style: ButtonStyle(
+          side: const WidgetStatePropertyAll(
+            BorderSide(color: AppColors.borderLight),
+          ),
+          backgroundColor: WidgetStateProperty.resolveWith(
+            (states) => states.contains(WidgetState.selected)
+                ? AppColors.primary
+                : AppColors.white,
+          ),
+          foregroundColor: WidgetStateProperty.resolveWith(
+            (states) => states.contains(WidgetState.selected)
+                ? AppColors.white
+                : AppColors.textPrimary,
+          ),
+        ),
+      ),
+      chipTheme: ChipThemeData(
+        backgroundColor: AppColors.surfaceLight,
+        selectedColor: AppColors.primaryContainer,
+        side: const BorderSide(color: AppColors.borderLight),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        labelStyle: AppTypography.bodySmall(color: AppColors.textPrimary),
+      ),
       textTheme: TextTheme(
         titleLarge: AppTypography.titleLarge(),
         titleMedium: AppTypography.titleMedium(),
@@ -33,17 +69,20 @@ class AppTheme {
         bodyLarge: AppTypography.bodyLarge(),
         bodyMedium: AppTypography.bodyMedium(),
         bodySmall: AppTypography.bodySmall(color: AppColors.textSecondary),
+        labelLarge: AppTypography.titleSmall(color: AppColors.textPrimary),
+        labelMedium: AppTypography.bodyMedium(color: AppColors.textSecondary),
+        labelSmall: AppTypography.bodySmall(color: AppColors.textSecondary),
       ),
       dialogTheme: DialogThemeData(
         backgroundColor: AppColors.surfaceLight,
-        surfaceTintColor: Colors.transparent,
+        surfaceTintColor: AppColors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         titleTextStyle: AppTypography.titleLarge(),
         contentTextStyle: AppTypography.bodyLarge(),
       ),
       bottomSheetTheme: const BottomSheetThemeData(
         backgroundColor: AppColors.surfaceLight,
-        surfaceTintColor: Colors.transparent,
+        surfaceTintColor: AppColors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
@@ -75,14 +114,14 @@ class AppTheme {
         centerTitle: true,
         toolbarHeight: 56,
         titleTextStyle: TextStyle(
-          fontFamily: 'Tajawal',
+          fontFamily: AppTypography.fontFamily,
           fontSize: 18,
           fontWeight: FontWeight.w700,
           color: AppColors.textPrimary,
         ),
         scrolledUnderElevation: 0.5,
         systemOverlayStyle: SystemUiOverlayStyle(
-          statusBarColor: Colors.transparent,
+          statusBarColor: AppColors.transparent,
           statusBarIconBrightness: Brightness.dark,
           statusBarBrightness: Brightness.light,
         ),
@@ -105,7 +144,7 @@ class AppTheme {
       ),
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: AppColors.navBackground,
-        surfaceTintColor: Colors.transparent,
+        surfaceTintColor: AppColors.transparent,
         elevation: 0,
         indicatorColor: AppColors.primaryContainer,
         labelTextStyle: WidgetStatePropertyAll(
@@ -119,7 +158,7 @@ class AppTheme {
       ),
       snackBarTheme: SnackBarThemeData(
         backgroundColor: AppColors.primaryDark,
-        contentTextStyle: AppTypography.bodyMedium(color: Colors.white),
+        contentTextStyle: AppTypography.bodyMedium(color: AppColors.white),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
           borderRadius: AppDecorations.roundedMedium,
@@ -145,7 +184,9 @@ class AppTheme {
       inputDecorationTheme: InputDecorationTheme(
         isDense: true,
         filled: true,
-        fillColor: AppColors.surfaceLight,
+        fillColor: AppColors.fieldSurface,
+        labelStyle: AppTypography.bodyMedium(color: AppColors.textSecondary),
+        hintStyle: AppTypography.bodyMedium(color: AppColors.textMuted),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 12,
           vertical: 12,
@@ -200,7 +241,7 @@ class AppTheme {
         centerTitle: true,
         scrolledUnderElevation: 0.5,
         systemOverlayStyle: SystemUiOverlayStyle(
-          statusBarColor: Colors.transparent,
+          statusBarColor: AppColors.transparent,
           statusBarIconBrightness: Brightness.light,
           statusBarBrightness: Brightness.dark,
         ),

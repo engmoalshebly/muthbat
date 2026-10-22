@@ -1,10 +1,13 @@
+import '../../../../app/theme/app_typography.dart';
+import 'dart:async';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'welcome_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../app/router/app_routes.dart';
 import '../../../../core/config/supabase_config.dart';
-import '../../../../core/database/app_database.dart';
 import '../../../local_ledger/local_ledger_store.dart';
 import '../../../../app/theme/app_colors.dart';
 import '../../../../core/constants/app_constants.dart';
@@ -12,6 +15,7 @@ import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../widgets/splash_background.dart';
 import '../widgets/splash_logo_badge.dart';
 import '../../../auth/presentation/customer_entry_mode.dart';
+import '../../../auth/presentation/workspace_preference.dart';
 
 /// الشاشة الافتتاحية الفاخرة لمنصة «مُثبَت | MUTHBAT»
 class SplashScreen extends ConsumerStatefulWidget {
@@ -24,20 +28,60 @@ class SplashScreen extends ConsumerStatefulWidget {
 class _SplashScreenState extends ConsumerState<SplashScreen> {
   bool _hasNavigated = false;
 
+  Future<String?> _preferredRoute() async {
+    final auth = ref.read(authControllerProvider);
+    final preference = await WorkspacePreference.read(auth.userId);
+    if (!mounted ||
+        ref.read(authControllerProvider).userId != auth.userId ||
+        preference == null) {
+      return null;
+    }
+    if (preference['kind'] == 'local') {
+      final id = preference['notebook_id'];
+      if (id is String) {
+        try {
+          await LocalLedgerStore.instance.selectNotebook(id);
+        } catch (_) {
+          return null;
+        }
+      }
+      return AppRoutes.localLedger;
+    }
+    if (!auth.hasLocalAccess) return null;
+    if (preference['kind'] == 'customer') return AppRoutes.customerHome;
+    if (preference['kind'] == 'merchant' &&
+        auth.businessAccessChecked &&
+        auth.activeBusinessId != null &&
+        auth.businessRole != null) {
+      return AppRoutes.merchantHome;
+    }
+    return null;
+  }
+
   void _openCurrentAccount() async {
     if (!mounted || _hasNavigated) return;
+    final preferred = await _preferredRoute();
+    if (!mounted || _hasNavigated) return;
+    if (preferred != null) {
+      _hasNavigated = true;
+      Navigator.pushReplacementNamed(context, preferred);
+      return;
+    }
     _hasNavigated = true;
     final account = ref.read(authControllerProvider);
     final customerMode =
         account.userId != null &&
         await CustomerEntryMode.selected(account.userId!);
     if (!mounted) return;
-    final route = account.status != AuthStatus.authenticated
+    final route = !account.hasLocalAccess
         ? AppRoutes.localLedger
-        : account.userType == 'customer' || customerMode
-        ? AppRoutes.customerHome
-        : account.requiresBusinessSetup
+        : account.userType == 'merchant' && account.requiresBusinessSetup
         ? AppRoutes.businessSetup
+        : account.userType == 'customer' ||
+              (customerMode &&
+                  (account.businessRole == null ||
+                      account.businessRole == 'owner'))
+        ? AppRoutes.customerHome
         : AppRoutes.merchantHome;
     Navigator.pushReplacementNamed(context, route);
   }
@@ -52,65 +96,80 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
 
   Future<void> _handleBootstrap() async {
     try {
-      final owner = await AppDatabase.instance.restoreRememberedOwner();
-      if (!mounted) return;
-      if (owner != null) {
-        await ref.read(authControllerProvider.notifier).ready;
-        if (!mounted) return;
-        _openCurrentAccount();
-        return;
-      }
-      final customer = await AppDatabase.instance.restoreRememberedCustomer();
-      if (!mounted) return;
-      if (customer != null) {
-        await ref.read(authControllerProvider.notifier).ready;
-        if (!mounted) return;
-        _openCurrentAccount();
-        return;
+      await _bootstrap().timeout(const Duration(seconds: 10));
+    } on TimeoutException {
+      if (!mounted || _hasNavigated) return;
+      ref.read(authControllerProvider.notifier).reset();
+      _openCurrentAccount();
+    }
+  }
+
+  Future<void> _bootstrap() async {
+    try {
+      if (SupabaseConfig.cloudReady) {
+        await ref.read(authControllerProvider.notifier).localReady;
+        if (!mounted || _hasNavigated) return;
+        if (ref.read(authControllerProvider).hasLocalAccess) {
+          _openCurrentAccount();
+          return;
+        }
       }
     } catch (_) {
       /* Continue to first-use flow if no readable owner store. */
     }
     try {
       final notebook = await LocalLedgerStore.instance.current();
-      if (!mounted) return;
+      if (!mounted || _hasNavigated) return;
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted || _hasNavigated) return;
+      if (notebook == null &&
+          !(prefs.getBool(WelcomeScreen.completedKey) ?? false)) {
+        _hasNavigated = true;
+        Navigator.pushReplacementNamed(context, AppRoutes.welcome);
+        return;
+      }
       if (!SupabaseConfig.cloudReady ||
           (notebook != null && notebook['transfer_state'] != 'complete')) {
+        _hasNavigated = true;
         Navigator.pushReplacementNamed(context, AppRoutes.localLedger);
         return;
       }
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || _hasNavigated) return;
+      _hasNavigated = true;
       Navigator.pushReplacementNamed(context, AppRoutes.localLedger);
       return;
     }
     final controller = ref.read(authControllerProvider.notifier);
     await Future.wait<void>([
-      controller.ready.timeout(
-        const Duration(seconds: 10),
-        onTimeout: () {
-          // Never leave the user behind the splash when auth/network is stuck.
-          controller.reset();
-        },
-      ),
+      controller.ready,
       // Keep the branded splash visible briefly without making auth timing
       // dependent on an arbitrary delay.
       Future<void>.delayed(const Duration(milliseconds: 700)),
     ]);
-    if (!mounted) return;
-    if (_hasNavigated) return;
-    _hasNavigated = true;
+    if (!mounted || _hasNavigated) return;
 
     final authState = ref.read(authControllerProvider);
+    final preferred = await _preferredRoute();
+    if (!mounted || _hasNavigated) return;
+    if (preferred != null) {
+      _hasNavigated = true;
+      Navigator.pushReplacementNamed(context, preferred);
+      return;
+    }
     final customerMode =
         authState.userId != null &&
         await CustomerEntryMode.selected(authState.userId!);
-    if (!mounted) return;
-    if (authState.status == AuthStatus.authenticated) {
-      if (authState.userType == 'customer' || customerMode) {
-        Navigator.pushReplacementNamed(context, AppRoutes.customerHome);
-      } else if (authState.requiresBusinessSetup) {
+    if (!mounted || _hasNavigated) return;
+    _hasNavigated = true;
+    if (authState.hasLocalAccess) {
+      if (authState.userType == 'merchant' && authState.requiresBusinessSetup) {
         Navigator.pushReplacementNamed(context, AppRoutes.businessSetup);
+      } else if (authState.userType == 'customer' ||
+          (customerMode &&
+              (authState.businessRole == null ||
+                  authState.businessRole == 'owner'))) {
+        Navigator.pushReplacementNamed(context, AppRoutes.customerHome);
       } else {
         Navigator.pushReplacementNamed(context, AppRoutes.merchantHome);
       }
@@ -149,7 +208,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                         .shimmer(
                           delay: 1100.ms,
                           duration: 1400.ms,
-                          color: Colors.white.withValues(alpha: 0.25),
+                          color: AppColors.white.withValues(alpha: 0.25),
                         ),
 
                     const SizedBox(height: 28),
@@ -158,10 +217,10 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                     Text(
                           AppConstants.appNameArabic,
                           style: TextStyle(
-                            fontFamily: 'Tajawal',
+                            fontFamily: AppTypography.fontFamily,
                             fontSize: 46,
                             fontWeight: FontWeight.w900,
-                            color: Colors.white,
+                            color: AppColors.white,
                             letterSpacing: -0.5,
                             height: 1.1,
                           ),
@@ -194,7 +253,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                             Text(
                               AppConstants.appNameEnglish,
                               style: TextStyle(
-                                fontFamily: 'Tajawal',
+                                fontFamily: AppTypography.fontFamily,
                                 fontSize: 13.5,
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: 6.0,
@@ -229,10 +288,10 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                             vertical: 7,
                           ),
                           decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.06),
+                            color: AppColors.white.withValues(alpha: 0.06),
                             borderRadius: BorderRadius.circular(20),
                             border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.1),
+                              color: AppColors.white.withValues(alpha: 0.1),
                               width: 1,
                             ),
                           ),
@@ -251,7 +310,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                               Text(
                                 AppConstants.appTagline,
                                 style: TextStyle(
-                                  fontFamily: 'Tajawal',
+                                  fontFamily: AppTypography.fontFamily,
                                   fontSize: 13.5,
                                   fontWeight: FontWeight.w600,
                                   color: AppColors.textWhiteSecondary,
@@ -284,7 +343,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                           borderRadius: BorderRadius.circular(4),
                           child: LinearProgressIndicator(
                             minHeight: 2.5,
-                            backgroundColor: Colors.white.withValues(
+                            backgroundColor: AppColors.white.withValues(
                               alpha: 0.1,
                             ),
                             valueColor: const AlwaysStoppedAnimation<Color>(
@@ -311,7 +370,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                           Text(
                             AppConstants.securityBadgeText,
                             style: TextStyle(
-                              fontFamily: 'Tajawal',
+                              fontFamily: AppTypography.fontFamily,
                               fontSize: 11.5,
                               fontWeight: FontWeight.w500,
                               color: AppColors.textWhiteSecondary.withValues(

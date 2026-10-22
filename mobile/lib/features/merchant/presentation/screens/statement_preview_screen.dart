@@ -1,3 +1,6 @@
+import '../../../../core/database/app_database.dart';
+import '../../../../core/config/supabase_config.dart';
+import '../../../../core/security/cloud_session.dart';
 import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'dart:io';
 
@@ -19,6 +22,7 @@ import '../../../../shared/widgets/custom_button.dart';
 import '../../../../core/finance/currency_info.dart';
 import '../../data/models/business_customer_model.dart';
 import '../../data/models/statement_model.dart';
+import '../../data/local_statement_pdf.dart';
 
 class StatementPreviewScreen extends StatelessWidget {
   final StatementModel statement;
@@ -35,12 +39,46 @@ class StatementPreviewScreen extends StatelessWidget {
       RegExp(r'[^\u0600-\u06FFa-zA-Z0-9_-]+'),
       '_',
     );
-    return 'كشف_حساب_${safeCustomer}_${statement.currencyCode}';
+    final currencyLabel = statement.combinedStatements.length > 1
+        ? statement.combinedStatements
+              .map((item) => item.currencyCode)
+              .join('_')
+        : statement.currencyCode;
+    return 'كشف_حساب_${safeCustomer}_$currencyLabel';
   }
 
   Future<Uint8List> _downloadPdfBytes() async {
+    if (statement.id.startsWith('statement-local-')) {
+      return localStatementPdf(statement, customer.localDisplayName);
+    }
+    requireCloudSession(
+      Supabase.instance.client,
+      AppDatabase.instance.accountId,
+    );
     var url = statement.downloadUrl;
-    if (statement.pdfObjectPath != null) {
+    if (statement.combinedStatements.length > 1) {
+      final response = await Supabase.instance.client.functions.invoke(
+        'combine-statements',
+        body: {
+          'statementIds': statement.combinedStatements
+              .map((item) => item.id)
+              .toList(),
+        },
+      );
+      final data = response.data;
+      if (data is! Map || data['signedUrl'] is! String) {
+        throw const FormatException('invalid_combined_statement_url');
+      }
+      final signedUri = Uri.parse(data['signedUrl'] as String);
+      final apiUri = Uri.parse(SupabaseConfig.effectiveUrl);
+      url = signedUri
+          .replace(
+            scheme: apiUri.scheme,
+            host: apiUri.host,
+            port: apiUri.hasPort ? apiUri.port : null,
+          )
+          .toString();
+    } else if (statement.pdfObjectPath != null) {
       url = await Supabase.instance.client.storage
           .from('statements')
           .createSignedUrl(statement.pdfObjectPath!, 300)
@@ -74,7 +112,7 @@ class StatementPreviewScreen extends StatelessWidget {
                 height: 18,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  color: Colors.white,
+                  color: AppColors.white,
                 ),
               ),
               const SizedBox(width: 12),
@@ -158,6 +196,9 @@ class StatementPreviewScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (statement.combinedStatements.length > 1) {
+      return _buildCombinedPreview(context);
+    }
     final isLocalPending = statement.downloadUrl == null;
     final currencyFormatter = NumberFormat('#,##0.##');
     final currencySymbol = CurrencyCatalog.forCode(
@@ -174,7 +215,7 @@ class StatementPreviewScreen extends StatelessWidget {
         elevation: 0,
         title: Text(
           isLocalPending ? 'كشف حساب محلي' : 'كشف حساب موثق',
-          style: AppTypography.titleMedium(color: Colors.white),
+          style: AppTypography.titleMedium(color: AppColors.white),
         ),
         actions: [
           if (!isLocalPending)
@@ -205,7 +246,7 @@ class StatementPreviewScreen extends StatelessWidget {
             // بطاقة شهادة كشف الحساب الرسمية
             Container(
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: AppColors.white,
                 borderRadius: BorderRadius.circular(24),
                 border: Border.all(
                   color: AppColors.accentGold.withValues(alpha: 0.5),
@@ -228,7 +269,7 @@ class StatementPreviewScreen extends StatelessWidget {
                       vertical: 16,
                     ),
                     decoration: const BoxDecoration(
-                      gradient: AppColors.brandGradient,
+                      gradient: AppColors.cardGradient,
                       borderRadius: BorderRadius.vertical(
                         top: Radius.circular(22),
                       ),
@@ -261,7 +302,7 @@ class StatementPreviewScreen extends StatelessWidget {
                               const SizedBox(width: 4),
                               Text(
                                 isLocalPending
-                                    ? 'بانتظار المزامنة'
+                                    ? 'محفوظ على الجهاز'
                                     : 'موثق رسمياً',
                                 style: const TextStyle(
                                   color: AppColors.accentGold,
@@ -306,7 +347,7 @@ class StatementPreviewScreen extends StatelessWidget {
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: const Text(
-                              'تم إنشاء الملخص من بيانات الجهاز. سيُنشأ ملف PDF الموثق تلقائياً عند توفر الإنترنت.',
+                              'الكشف جاهز من بيانات الجهاز. تعمل مزامنة النسخة الموثقة في الخلفية.',
                               textAlign: TextAlign.center,
                             ),
                           ),
@@ -473,11 +514,16 @@ class StatementPreviewScreen extends StatelessWidget {
             const SizedBox(height: 24),
 
             // أزرار الإجراء
-            if (statement.downloadUrl != null) ...[
+            if (statement.downloadUrl != null ||
+                statement.id.startsWith('statement-local-')) ...[
               CustomButton(
                 text: 'فتح / تحميل كشف PDF',
                 variant: ButtonVariant.primary,
                 onPressed: () async {
+                  if (statement.downloadUrl == null) {
+                    await _savePdf(context);
+                    return;
+                  }
                   try {
                     final uri = Uri.parse(statement.downloadUrl!);
                     // لا نستخدم canLaunchUrl كحارس؛ بعض إصدارات Android تعيد
@@ -542,11 +588,11 @@ class StatementPreviewScreen extends StatelessWidget {
               onPressed: () {
                 final shareText =
                     '''
-كشف حساب موثق من تطبيق مُثبَت
+كشف حساب من تطبيق مُثبَت
 العميل: ${customer.localDisplayName}
 الفترة: من $from إلى $to
 الرصيد الختامي: ${currencyFormatter.format(statement.closingBalance)} $currencySymbol
-${isLocalPending ? 'الحالة: محلي - بانتظار المزامنة' : 'رمز التحقق الرسمي: ${statement.verificationCode}'}
+${isLocalPending ? 'الحالة: نسخة من بيانات الجهاز' : 'رمز التحقق الرسمي: ${statement.verificationCode}'}
 ''';
                 Clipboard.setData(ClipboardData(text: shareText));
                 TopNotice.of(context).showSnackBar(
@@ -561,6 +607,81 @@ ${isLocalPending ? 'الحالة: محلي - بانتظار المزامنة' : 
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildCombinedPreview(BuildContext context) {
+    final formatter = NumberFormat('#,##0.##');
+    final dateFormat = DateFormat('yyyy/MM/dd');
+    return Scaffold(
+      backgroundColor: AppColors.backgroundLight,
+      appBar: AppBar(title: const Text('كشف كل العملات')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(
+            customer.localDisplayName,
+            style: AppTypography.titleLarge(color: AppColors.textPrimary),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'من ${dateFormat.format(DateTime.parse(statement.periodFrom))} إلى ${dateFormat.format(DateTime.parse(statement.periodTo))}',
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'كل عملة في صفحة مستقلة من ملف PDF، دون جمع أرصدة العملات المختلفة.',
+          ),
+          const SizedBox(height: 16),
+          for (final item in statement.combinedStatements) ...[
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.currencyCode,
+                      style: AppTypography.titleMedium(
+                        color: AppColors.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'الرصيد الافتتاحي: ${formatter.format(item.openingBalance)} ${item.currencyCode}',
+                    ),
+                    Text(
+                      'الديون: ${formatter.format(item.totalDebits)} ${item.currencyCode}',
+                    ),
+                    Text(
+                      'السدادات والخصومات: ${formatter.format(item.totalCredits)} ${item.currencyCode}',
+                    ),
+                    Text(
+                      'الرصيد الختامي: ${formatter.format(item.closingBalance)} ${item.currencyCode}',
+                    ),
+                    Text(
+                      item.id.startsWith('statement-local-')
+                          ? 'نسخة من بيانات الجهاز'
+                          : 'رمز التحقق: ${item.verificationCode}',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: () => _savePdf(context),
+            icon: const Icon(Icons.download_rounded),
+            label: const Text('تنزيل PDF لكل العملات'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => _sharePdf(context),
+            icon: const Icon(Icons.share_rounded),
+            label: const Text('مشاركة PDF'),
+          ),
+        ],
       ),
     );
   }

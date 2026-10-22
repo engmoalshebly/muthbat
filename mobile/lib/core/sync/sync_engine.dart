@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/widgets.dart';
@@ -10,7 +11,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 import '../database/app_database.dart';
+import '../security/cloud_session.dart';
 import 'sync_policy.dart';
+import 'business_logo_upload.dart';
 
 enum SyncState { idle, syncing, synced, offline, error }
 
@@ -32,6 +35,7 @@ class SyncProgress {
   final int deadLetterCount;
   final String? lastMessage;
   final DateTime? lastSyncAt;
+  final bool dataChanged;
 
   const SyncProgress({
     this.state = SyncState.idle,
@@ -40,6 +44,7 @@ class SyncProgress {
     this.deadLetterCount = 0,
     this.lastMessage,
     this.lastSyncAt,
+    this.dataChanged = false,
   });
 }
 
@@ -167,7 +172,24 @@ bool _isPermanentGuardMessage(String message) {
 /// أو (خطأ مؤقت: failed + backoff أسّي 1د→30د حتى 8 محاولات)
 /// أو (خطأ دائم: dead_letter فوراً بلا حذف صامت).
 class SyncEngine with WidgetsBindingObserver {
-  SyncEngine._();
+  SyncEngine._()
+    : _injectedClient = null,
+      _isOnline = null,
+      _now = DateTime.now;
+
+  @visibleForTesting
+  SyncEngine.forTesting({
+    required SupabaseClient client,
+    required Future<bool> Function() isOnline,
+    DateTime Function()? now,
+  }) : _injectedClient = client,
+       _isOnline = isOnline,
+       _now = now ?? DateTime.now;
+
+  final SupabaseClient? _injectedClient;
+  final Future<bool> Function()? _isOnline;
+  final DateTime Function() _now;
+  SupabaseClient get _client => _injectedClient ?? Supabase.instance.client;
   static final SyncEngine instance = SyncEngine._();
 
   static const _uuid = Uuid();
@@ -175,16 +197,21 @@ class SyncEngine with WidgetsBindingObserver {
 
   final _progressController = StreamController<SyncProgress>.broadcast();
   Stream<SyncProgress> get progressStream => _progressController.stream;
+  SyncProgress? _latestProgress;
+  SyncProgress? get latestProgress => _latestProgress;
 
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   Timer? _periodicTimer;
   bool _isProcessing = false;
+  bool _syncRequested = false;
   bool _paused = false;
   Completer<void>? _drained;
 
   Future<void> pauseAndDrain() async {
     _paused = true;
+    _syncRequested = false;
     await _drained?.future;
+    _latestProgress = null;
   }
 
   void resume() {
@@ -216,6 +243,8 @@ class SyncEngine with WidgetsBindingObserver {
   }
 
   void dispose() {
+    _paused = true;
+    _syncRequested = false;
     WidgetsBinding.instance.removeObserver(this);
     _connectivitySub?.cancel();
     _periodicTimer?.cancel();
@@ -227,89 +256,162 @@ class SyncEngine with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) triggerSync();
   }
 
-  void _notify(SyncState state, [String? message]) async {
-    if (AppDatabase.instance.accountId == null) return;
-    final counts = await AppDatabase.instance.getMutationStatusCounts();
-    _progressController.add(
-      SyncProgress(
-        state: state,
-        pendingCount:
-            (counts['pending'] ?? 0) +
-            (counts['syncing'] ?? 0) +
-            (counts['failed'] ?? 0),
-        failedCount: counts['failed'] ?? 0,
-        deadLetterCount: counts['dead_letter'] ?? 0,
-        lastMessage: message,
-        lastSyncAt: _lastSyncAt,
-      ),
+  Future<void> _notify(
+    SyncState state,
+    String? message, {
+    bool dataChanged = false,
+  }) async {
+    final accountId = AppDatabase.instance.accountId;
+    if (accountId == null || _progressController.isClosed) return;
+    Map<String, int> counts;
+    try {
+      counts = await AppDatabase.instance.getMutationStatusCounts();
+    } catch (error) {
+      // Reporting a sync failure must never throw a second unhandled error
+      // when sign-out or account switching closes the cache concurrently.
+      debugPrint('[SyncEngine] Progress unavailable: $error');
+      return;
+    }
+    if (AppDatabase.instance.accountId != accountId ||
+        _progressController.isClosed) {
+      return;
+    }
+    final progress = SyncProgress(
+      state: state,
+      pendingCount:
+          (counts['pending'] ?? 0) +
+          (counts['syncing'] ?? 0) +
+          (counts['failed'] ?? 0),
+      failedCount: counts['failed'] ?? 0,
+      deadLetterCount: counts['dead_letter'] ?? 0,
+      lastMessage: message,
+      lastSyncAt: _lastSyncAt,
+      dataChanged: dataChanged,
     );
+    _latestProgress = progress;
+    _progressController.add(progress);
   }
 
-  /// تشغيل المزامنة اليدوية أو التلقائية
-  Future<void> triggerSync() async {
-    if (_isProcessing || _paused) return;
-    if (Supabase.instance.client.auth.currentSession == null ||
-        Supabase.instance.client.auth.currentSession!.isExpired) {
-      return;
+  /// Returns true only after all required data pulls and pending work succeed.
+  Future<bool> triggerSync() async {
+    if (_paused) return false;
+    if (_isProcessing) {
+      // A save during a pull must not wait for the next periodic timer.
+      _syncRequested = true;
+      return false;
     }
-    if (AppDatabase.instance.accountId !=
-        Supabase.instance.client.auth.currentUser?.id) {
-      return;
+    if (_client.auth.currentSession == null) {
+      return false;
+    }
+    if (AppDatabase.instance.accountId != _client.auth.currentUser?.id) {
+      return false;
     }
     final syncAccountId = AppDatabase.instance.accountId!;
+    _syncRequested = false;
     _isProcessing = true;
     _drained = Completer<void>();
 
     try {
-      final connectivity = await Connectivity().checkConnectivity();
-      final isOnline = connectivity.any((r) => r != ConnectivityResult.none);
+      final isOnline = _isOnline != null
+          ? await _isOnline()
+          : (await Connectivity().checkConnectivity()).any(
+              (r) => r != ConnectivityResult.none,
+            );
       if (!isOnline) {
-        _notify(SyncState.offline, 'لا يوجد اتصال بالإنترنت (العمل محلياً)');
-        return;
+        await _notify(
+          SyncState.offline,
+          'لا يوجد اتصال بالإنترنت (العمل محلياً)',
+        );
+        return false;
       }
+
+      // An offline-expired access token is recoverable with the securely
+      // persisted refresh token. Retry when connectivity returns rather than
+      // requiring a password for every offline interval.
+      if (_client.auth.currentSession?.isExpired == true) {
+        await _client.auth.refreshSession().timeout(
+          const Duration(seconds: 15),
+        );
+      }
+      requireCloudSession(_client, syncAccountId);
+      assertSyncAccount(
+        expected: syncAccountId,
+        current: AppDatabase.instance.accountId,
+      );
 
       final pendingCount = await AppDatabase.instance
           .getPendingMutationsCount();
       if (pendingCount > 0) {
-        _notify(SyncState.syncing, 'جاري مزامنة $pendingCount عملية معلقة...');
+        await _notify(
+          SyncState.syncing,
+          'جاري مزامنة $pendingCount عملية معلقة...',
+        );
+      } else {
+        await _notify(SyncState.syncing, 'جاري جلب تحديثات الحساب...');
       }
 
       // 1. معالجة العمليات غير المرسلة في الطابور (Push Queue)
       await _processPendingMutations(syncAccountId);
+      if (_paused) return false;
 
       // 2. سحب البيانات المحدثة من السحابة (Pull Updates)
+      requireCloudSession(_client, syncAccountId);
       assertSyncAccount(
         expected: syncAccountId,
         current: AppDatabase.instance.accountId,
       );
       await _pullRemoteUpdates(syncAccountId);
-
-      _lastSyncAt = DateTime.now();
+      if (_paused) return false;
 
       final remaining = await AppDatabase.instance.getPendingMutationsCount();
       final deadLetter = await AppDatabase.instance.getDeadLetterCount();
+      requireCloudSession(_client, syncAccountId);
+      assertSyncAccount(
+        expected: syncAccountId,
+        current: AppDatabase.instance.accountId,
+      );
       if (remaining == 0 && deadLetter == 0) {
-        _notify(SyncState.synced, 'تمت المزامنة بنجاح وكل البيانات موثقة');
+        _lastSyncAt = _now();
+        await _notify(
+          SyncState.synced,
+          'تمت المزامنة بنجاح وكل البيانات موثقة',
+        );
+        return true;
       } else if (deadLetter > 0) {
-        _notify(SyncState.error, '$deadLetter عملية تحتاج مراجعة');
+        await _notify(SyncState.error, '$deadLetter عملية تحتاج مراجعة');
       } else {
-        _notify(SyncState.idle, '$remaining عمليات متبقية');
+        await _notify(SyncState.idle, '$remaining عمليات متبقية');
       }
+      return false;
     } catch (e) {
       debugPrint('[SyncEngine] Sync error: $e');
-      _notify(SyncState.error, 'تعذرت المزامنة: $e');
+      final classification = classifySyncError(e);
+      final message = e is AuthException
+          ? 'انتهت جلسة الدخول. افتح حسابك وأعد المحاولة.'
+          : classification.kind == SyncErrorClass.transient
+          ? 'تعذر الاتصال حاليًا. بياناتك محفوظة محليًا وستُعاد المحاولة تلقائيًا.'
+          : 'تعذرت المزامنة. راجع حالة العمليات المعلقة وحاول مجددًا.';
+      await _notify(SyncState.error, message);
+      return false;
     } finally {
       _isProcessing = false;
       _drained?.complete();
       _drained = null;
+      final rerun = _syncRequested;
+      _syncRequested = false;
+      if (rerun &&
+          !_paused &&
+          AppDatabase.instance.accountId == syncAccountId) {
+        unawaited(triggerSync());
+      }
     }
   }
 
   // ==================== Push: إرسال الأوامر المعلقة ====================
 
   Future<void> _processPendingMutations(String syncAccountId) async {
-    final client = Supabase.instance.client;
-    if (client.auth.currentSession == null) return;
+    final client = _client;
+    if (!canUseCloudSession(client.auth.currentSession, syncAccountId)) return;
 
     final db = AppDatabase.instance;
 
@@ -318,7 +420,18 @@ class SyncEngine with WidgetsBindingObserver {
 
     final mutations = await db.getDueMutations(DateTime.now());
 
-    for (final mutation in mutations) {
+    for (final snapshot in mutations) {
+      if (_paused) return;
+      // Earlier commands may have rewritten this command's payload or blocked
+      // it. Never dispatch a stale in-memory snapshot of the queue.
+      final mutation = await db.getMutationByClientRequestId(
+        snapshot['client_request_id'] as String,
+      );
+      if (mutation == null ||
+          !['pending', 'failed'].contains(mutation['status'])) {
+        continue;
+      }
+      requireCloudSession(_client, syncAccountId);
       assertSyncAccount(
         expected: syncAccountId,
         current: AppDatabase.instance.accountId,
@@ -327,8 +440,17 @@ class SyncEngine with WidgetsBindingObserver {
       final String commandType = mutation['command_type'];
       final int attemptCount =
           (mutation['attempt_count'] as num?)?.toInt() ?? 0;
-      final Map<String, dynamic> payload =
+      Map<String, dynamic> payload =
           jsonDecode(mutation['payload_json']) as Map<String, dynamic>;
+      payload = await db.resolveMutationReferences(payload);
+      if (commandType == 'mutate_customer_profile' &&
+          payload['p_action'] == 'archive' &&
+          await db.hasEarlierCustomerWork(
+            payload['p_business_customer_id'] as String,
+            (mutation['id'] as num).toInt(),
+          )) {
+        continue;
+      }
 
       // قاعدة الاعتمادية: لا يُرسل أمر قبل نجاح الأمر الذي يعتمد عليه
       final dependsOn = mutation['depends_on_client_request_id'] as String?;
@@ -343,18 +465,36 @@ class SyncEngine with WidgetsBindingObserver {
       await db.markMutationSyncing(clientRequestId);
 
       try {
+        if (commandType == 'customer_directory' ||
+            commandType == 'pending_directory' ||
+            commandType == 'add_business_customer') {
+          payload['requestId'] = clientRequestId;
+        }
+        if (commandType == 'mutate_customer_profile') {
+          payload['p_request_id'] = clientRequestId;
+        }
+        if (commandType == 'create_business') {
+          payload['p_request_id'] = clientRequestId;
+        }
+        if (commandType == 'upload_business_logo') {
+          payload['requestId'] = clientRequestId;
+        }
+        if (commandType == 'update_business_currencies_idempotent') {
+          payload['p_request_id'] = clientRequestId;
+        }
         final serverEntityId = await _dispatchCommand(
           client,
           commandType,
           payload,
         );
+        requireCloudSession(_client, syncAccountId);
         assertSyncAccount(
           expected: syncAccountId,
           current: AppDatabase.instance.accountId,
         );
         await _reconcileSuccess(mutation, serverEntityId);
       } catch (error) {
-        if (error is SyncAccountChanged) rethrow;
+        if (error is SyncAccountChanged || error is AuthException) rethrow;
         final classification = classifySyncError(error);
         final newAttemptCount = attemptCount + 1;
         debugPrint(
@@ -376,6 +516,13 @@ class SyncEngine with WidgetsBindingObserver {
             error: classification.message,
             errorCode: classification.code,
           );
+          if (commandType == 'update_business_currencies_idempotent') {
+            await db.rollbackRejectedBusinessCurrencies(
+              payload['p_business_id'] as String,
+              jsonEncode(payload['p_additional_currencies']),
+              payload['previous'] as String,
+            );
+          }
         } else {
           await db.markMutationFailed(
             clientRequestId,
@@ -407,7 +554,9 @@ class SyncEngine with WidgetsBindingObserver {
       if (item.key == 'localCustomerId') continue;
       final value = item.value;
       if (value is String &&
-          (value.startsWith('cust-') || value.startsWith('entry-'))) {
+          (value.startsWith('cust-') ||
+              value.startsWith('entry-') ||
+              value.startsWith('biz-'))) {
         final serverId = await AppDatabase.instance.getServerId(value);
         if (serverId == null) return true;
       }
@@ -423,9 +572,62 @@ class SyncEngine with WidgetsBindingObserver {
     Map<String, dynamic> payload,
   ) async {
     switch (commandType) {
+      case 'update_business_currencies_idempotent':
+        final saved = await client.rpc(
+          'update_business_currencies_idempotent',
+          params: {
+            'p_business_id': payload['p_business_id'],
+            'p_additional_currencies': payload['p_additional_currencies'],
+            'p_request_id': payload['p_request_id'],
+          },
+        );
+        if (saved is! List) throw StateError('currency_update_unconfirmed');
+        return payload['p_business_id'] as String;
+      case 'mutate_customer_profile':
+        final result = await client.rpc(
+          'mutate_customer_profile',
+          params: payload,
+        );
+        if (result is! Map ||
+            (result['updated'] != true && result['archived'] != true)) {
+          throw StateError('لم يؤكد الخادم تعديل العميل');
+        }
+        return payload['p_business_customer_id'] as String;
       case 'create_business':
-        final result = await client.rpc('create_business', params: payload);
+        // Upgrade queued legacy commands to the same receipt contract.
+        final profile =
+            payload['p_profile'] ??
+            {
+              'name': payload['p_name'],
+              'business_type': payload['p_business_type'],
+              'currency_code': payload['p_currency_code'],
+              'additional_currencies': payload['p_additional_currencies'] ?? [],
+              'country_code': payload['p_country_code'] ?? 'YE',
+              'city': payload['p_city'],
+              'address': payload['p_address'],
+            };
+        final result = await client.rpc(
+          'create_business_idempotent',
+          params: {
+            'p_request_id': payload['p_request_id'],
+            'p_profile': profile,
+          },
+        );
+        if (result is! String ||
+            !RegExp(
+              r'^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$',
+            ).hasMatch(result)) {
+          throw StateError('لم يؤكد الخادم إنشاء النشاط');
+        }
         return result as String?;
+      case 'upload_business_logo':
+        return uploadBusinessLogo(
+          client,
+          businessId: payload['businessId'] as String,
+          requestId: payload['requestId'] as String,
+          bytes: base64Decode(payload['bytes'] as String),
+          extension: payload['extension'] as String? ?? 'jpg',
+        );
 
       case 'create_ledger_entry':
         // المرفقات تسلك مسار upload_sessions بعد المزامنة (قرار 19) —
@@ -468,6 +670,22 @@ class SyncEngine with WidgetsBindingObserver {
         final result = await client.rpc('open_dispute', params: payload);
         return result as String?;
 
+      case 'resolve_dispute':
+        final result = await client.rpc('resolve_dispute', params: payload);
+        return result as String?;
+
+      case 'add_dispute_message':
+        final result = await client.rpc(
+          'add_dispute_message',
+          params: {
+            'p_dispute_id': payload['p_dispute_id'],
+            'p_message': payload['p_message'],
+            'p_client_request_id': payload['p_client_request_id'],
+            'p_sender_workspace': payload['p_sender_workspace'] ?? 'merchant',
+          },
+        );
+        return result?.toString();
+
       case 'add_business_customer':
       case 'pending_directory':
       case 'customer_directory':
@@ -478,10 +696,14 @@ class SyncEngine with WidgetsBindingObserver {
           body: payload,
         );
         final data = response.data;
-        if (data is Map && data['businessCustomerId'] != null) {
+        if (data is Map &&
+            data['businessCustomerId'] is String &&
+            (data['businessCustomerId'] as String).isNotEmpty) {
           return data['businessCustomerId'] as String;
         }
-        return null;
+        throw StateError(
+          'لم يؤكد الخادم إنشاء العميل. سيبقى الطلب محفوظًا للمراجعة.',
+        );
 
       case 'generate_statement':
         final statementId = await client.rpc(
@@ -573,6 +795,10 @@ class SyncEngine with WidgetsBindingObserver {
     final String clientRequestId = mutation['client_request_id'];
     final String commandType = mutation['command_type'];
     final String? localRefId = mutation['local_ref_id'] as String?;
+    if (commandType == 'mutate_customer_profile' && localRefId != null) {
+      await db.completeCustomerProfileMutation(clientRequestId, localRefId);
+      return;
+    }
 
     if (commandType == 'create_business') {
       if (serverEntityId != null && localRefId != null) {
@@ -601,6 +827,18 @@ class SyncEngine with WidgetsBindingObserver {
       } else {
         await db.markLedgerEntrySynced(clientRequestId);
       }
+    } else if (commandType == 'upload_business_logo' &&
+        serverEntityId != null &&
+        localRefId != null) {
+      final local = await db.database;
+      await local.update(
+        'local_businesses',
+        {'logo_path': serverEntityId},
+        where: 'id=?',
+        whereArgs: [localRefId],
+      );
+    } else if (commandType == 'add_dispute_message' && serverEntityId != null) {
+      await db.reconcileDisputeMessage(clientRequestId, serverEntityId);
     }
 
     // نجحت العملية -> إزالة من الطابور (الأوامر المعتمدة تتحرر تلقائياً)
@@ -610,38 +848,52 @@ class SyncEngine with WidgetsBindingObserver {
   // ==================== Pull: سحب البيانات من السحابة ====================
 
   Future<void> _pullRemoteUpdates(String syncAccountId) async {
-    final client = Supabase.instance.client;
+    final client = _client;
+    requireCloudSession(client, syncAccountId);
     final user = client.auth.currentUser;
-    if (user == null) return;
+    if (user == null) throw StateError('انتهت الجلسة أثناء جلب البيانات.');
 
     try {
       try {
-        final currencyRows = await client
-            .from('currencies')
-            .select('code,name,symbol,decimal_scale,is_active,updated_at')
-            .eq('is_active', true)
-            .order('code');
+        final currencyRows = await collectAllPages<Map<String, dynamic>>(
+          fetchPage: (from, to) async => await client
+              .from('currencies')
+              .select('code,name,symbol,decimal_scale,is_active,updated_at')
+              .eq('is_active', true)
+              .order('code')
+              .range(from, to)
+              .timeout(const Duration(seconds: 15)),
+        );
         await AppDatabase.instance.upsertCurrencies(
           currencyRows.map((row) => Map<String, dynamic>.from(row)).toList(),
         );
       } catch (e) {
-        debugPrint('[SyncEngine] Currency catalog pull skipped: $e');
+        debugPrint('[SyncEngine] Currency catalog pull failed: $e');
+        rethrow;
       }
 
       // 1. سحب بيانات المحلات التي ينتمي إليها المستخدم
-      final memberBusinesses = await client
-          .from('business_members')
-          .select('businesses(*)')
-          .eq('user_id', user.id)
-          .eq('status', 'active');
+      if (_paused) return;
+      final memberBusinesses = await collectAllPages<Map<String, dynamic>>(
+        fetchPage: (from, to) async => await client
+            .from('business_members')
+            .select('businesses(*)')
+            .eq('user_id', user.id)
+            .eq('status', 'active')
+            .order('business_id')
+            .range(from, to)
+            .timeout(const Duration(seconds: 15)),
+      );
 
       for (final row in memberBusinesses) {
+        if (_paused) return;
+        requireCloudSession(_client, syncAccountId);
         assertSyncAccount(
           expected: syncAccountId,
           current: AppDatabase.instance.accountId,
         );
         final b = row['businesses'] as Map<String, dynamic>?;
-        if (b == null) continue;
+        if (b == null) throw StateError('تعذر جلب بيانات نشاط مرتبط بالحساب.');
 
         final businessId = b['id'] as String;
         await AppDatabase.instance.saveBusiness({
@@ -659,202 +911,143 @@ class SyncEngine with WidgetsBindingObserver {
           'country_code': b['country_code'] ?? 'YE',
           'city': b['city'],
           'contact_phone': b['contact_phone_display'],
+          'logo_path': b['logo_path'],
           'is_active': 1,
           'created_at': b['created_at'],
         });
 
-        // الترتيب: عملاء → قيود (تزايدي) → أرصدة عملات → نزاعات
-        await _pullCustomers(client, businessId);
-        await _pullLedgerEntries(client, user.id, businessId);
-        await _pullCurrencyBalances(client, businessId);
+        // Apply one financial snapshot atomically, then hydrate private contacts and disputes.
+        await _pullMerchantSnapshot(client, businessId, syncAccountId);
+        if (_paused) return;
         await _pullDisputes(client, businessId);
+        if (_paused) return;
+        await _pullCustomerContacts(client, businessId, syncAccountId);
       }
     } catch (e) {
       debugPrint('[SyncEngine] Pull update error: $e');
+      rethrow;
     }
   }
 
   /// سحب العملاء + أرصدتهم المسطحة باستعلام مجمّع واحد (إصلاح N+1)،
   /// مع حماية السجلات pending من الكتابة الفوقية.
-  Future<void> _pullCustomers(SupabaseClient client, String businessId) async {
-    final customers = await client
-        .from('business_customers')
-        .select('*, customers(global_code)')
-        .eq('business_id', businessId)
-        .eq('is_archived', false);
-
-    // استعلام مجمّع واحد للأرصدة بدل استعلام لكل عميل
-    final businessRow = await client
-        .from('businesses')
-        .select('currency_code')
-        .eq('id', businessId)
-        .single();
-    final baseCurrency = (businessRow['currency_code'] as String? ?? 'YER')
-        .toUpperCase();
-    final balanceRows = await client
-        .from('business_customer_balances')
-        .select(
-          'business_customer_id, currency_code, current_balance, gross_overdue_debits',
-        )
-        .eq('business_id', businessId);
-
-    final Map<String, double> balances = {};
-    final Map<String, double> overdueByCustomer = {};
-    for (final row in balanceRows) {
-      if ((row['currency_code'] as String? ?? baseCurrency).toUpperCase() ==
-          baseCurrency) {
-        final customerId = row['business_customer_id'] as String;
-        balances[customerId] =
-            (row['current_balance'] as num?)?.toDouble() ?? 0.0;
-        overdueByCustomer[customerId] =
-            (row['gross_overdue_debits'] as num?)?.toDouble() ?? 0.0;
-      }
-    }
-
-    for (final c in customers) {
-      final double currentBal = balances[c['id'] as String] ?? 0.0;
-      final double owes = currentBal > 0 ? currentBal : 0.0;
-      final double advance = currentBal < 0 ? currentBal.abs() : 0.0;
-
-      await AppDatabase.instance.upsertBusinessCustomer({
-        'id': c['id'],
-        'business_id': businessId,
-        'customer_id': c['customer_id'],
-        'local_display_name': c['local_display_name'],
-        'local_note': c['local_note'],
-        'credit_limit': (c['credit_limit'] as num?)?.toDouble(),
-        'default_due_days': c['default_due_days'],
-        'link_status': c['link_status'] ?? 'unlinked',
-        'current_balance': currentBal,
-        'amount_customer_owes': owes,
-        'amount_business_owes_customer': advance,
-        'overdue_balance': overdueByCustomer[c['id'] as String] ?? 0.0,
-        'is_archived': 0,
-        'sync_status': 'synced',
-        'created_at': c['created_at'],
-        'updated_at': c['updated_at'],
-      }, fromServer: true);
-    }
-  }
-
-  /// سحب القيود المالية تزايدياً عبر sync_checkpoints (لكل مستخدم/جهاز/محل):
-  /// يجلب فقط ما هو أحدث من المؤشر، ويحدّث المؤشر بعد نجاح الدفعة.
-  Future<void> _pullLedgerEntries(
+  Future<void> _pullMerchantSnapshot(
     SupabaseClient client,
-    String userId,
     String businessId,
+    String accountId,
   ) async {
     final db = AppDatabase.instance;
-    final deviceId = await _getOrCreateDeviceId(db);
-
-    // المؤشر الفعّال: المحلي أولاً ثم مؤشر السيرفر كاحتياط
-    String? cursor = await db.getLocalCheckpoint(businessId);
-    cursor ??= await _getServerCheckpoint(client, deviceId, businessId);
-
-    final rows = await collectAllPages<Map<String, dynamic>>(
-      fetchPage: (from, to) async {
-        var filter = client
-            .from('ledger_timeline')
-            .select(
-              'id, business_id, business_customer_id, customer_id, entry_type, '
-              'direction, amount, currency_code, description, occurred_at, '
-              'category, payment_method, reference_number, bank_or_agent_name, attachment_url, '
-              'due_date, external_reference, client_request_id, created_at, '
-              'confirmation_status, dispute_status, is_reversed',
-            )
-            .eq('business_id', businessId);
-        if (cursor != null && cursor.isNotEmpty) {
-          filter = filter.gt('created_at', cursor);
-        }
-        final page = await filter
-            .order('created_at', ascending: true)
-            .order('id', ascending: true)
-            .range(from, to);
-        return page.map((row) => Map<String, dynamic>.from(row)).toList();
-      },
+    final local = await db.database;
+    final pending = await local.query(
+      'local_ledger_entries',
+      columns: ['client_request_id'],
+      where: "business_id=? AND sync_status != 'synced'",
+      whereArgs: [businessId],
     );
-    if (rows.isEmpty) return;
-
-    // Optional on legacy servers; other failures must not advance the cursor.
-    final categoryLabels = <String, String>{};
-    try {
-      const labelBatchSize = 200;
-      for (var offset = 0; offset < rows.length; offset += labelBatchSize) {
-        final end = min(offset + labelBatchSize, rows.length);
-        final labels = await client
-            .from('local_import_entry_categories')
-            .select('entry_id,label')
-            .inFilter(
-              'entry_id',
-              rows.sublist(offset, end).map((r) => r['id'] as String).toList(),
-            );
-        for (final label in labels) {
-          categoryLabels[label['entry_id'] as String] =
-              label['label'] as String;
-        }
+    final requestIds = pending
+        .map((r) => r['client_request_id'] as String)
+        .where((id) => RegExp(r'^[0-9a-fA-F-]{36}$').hasMatch(id))
+        .toList();
+    final result = await client
+        .rpc(
+          'begin_merchant_sync_snapshot',
+          params: {
+            'p_business_id': businessId,
+            'p_cursor': await db.getLocalCheckpoint(businessId),
+            'p_pending_requests': requestIds,
+            'p_device_id': await _getOrCreateDeviceId(db),
+            'p_previous_snapshot_id': await db.getSyncStateValue(
+              'snapshot:$businessId',
+            ),
+          },
+        )
+        .timeout(const Duration(seconds: 15));
+    if (result is! Map ||
+        result['snapshot_id'] is! String ||
+        result['item_count'] is! num) {
+      throw StateError('Invalid snapshot');
+    }
+    final count = (result['item_count'] as num).toInt();
+    final items = <Map<String, dynamic>>[];
+    var after = 0;
+    while (items.length < count) {
+      if (_paused) return;
+      final page = await client
+          .rpc(
+            'read_merchant_sync_snapshot',
+            params: {
+              'p_snapshot_id': result['snapshot_id'],
+              'p_after': after,
+              'p_limit': 500,
+            },
+          )
+          .timeout(const Duration(seconds: 15));
+      if (page is! List || page.isEmpty) {
+        throw StateError('Incomplete snapshot');
       }
-    } on PostgrestException catch (error) {
-      if (error.code != 'PGRST205' && error.code != '42P01') rethrow;
+      for (final raw in page) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final ordinal = (row['ordinal'] as num).toInt();
+        if (ordinal != after + 1 ||
+            !['entry', 'state', 'customer', 'balance'].contains(row['kind']) ||
+            row['payload'] is! Map) {
+          throw StateError('Invalid snapshot page');
+        }
+        after = ordinal;
+        items.add(row);
+      }
     }
-
-    for (final row in rows) {
-      await db.upsertLedgerEntryFromServer({
-        ...Map<String, dynamic>.from(row),
-        'local_category_label': categoryLabels[row['id']],
-      });
-    }
-
-    // تحديث المؤشر بعد نجاح الدفعة (محلياً + السيرفر بأفضل جهد)
-    final newCursor = rows.last['created_at'] as String?;
-    if (newCursor != null) {
-      await db.setLocalCheckpoint(businessId, newCursor);
-      await _setServerCheckpoint(
-        client,
-        userId,
-        deviceId,
-        businessId,
-        newCursor,
-      );
-    }
+    if (items.length != count) throw StateError('Invalid snapshot size');
+    if (_paused) return;
+    requireCloudSession(client, accountId);
+    assertSyncAccount(expected: accountId, current: db.accountId);
+    await db.applyMerchantSnapshot(
+      businessId,
+      items,
+      snapshotId: result['snapshot_id'] as String,
+    );
+    await _notify(
+      SyncState.syncing,
+      'تم تحديث بيانات الدفتر',
+      dataChanged: true,
+    );
+    unawaited(() async {
+      try {
+        await client
+            .rpc(
+              'release_merchant_sync_snapshot',
+              params: {'p_snapshot_id': result['snapshot_id']},
+            )
+            .timeout(const Duration(seconds: 5));
+      } catch (_) {
+        // An expired/disposable server copy never invalidates an applied snapshot.
+      }
+    }());
   }
 
-  /// سحب أرصدة العملات من السيرفر باستعلام مجمّع واحد لكل محل.
-  Future<void> _pullCurrencyBalances(
-    SupabaseClient client,
-    String businessId,
-  ) async {
-    try {
-      final rows = await client
-          .from('customer_currency_balances')
-          .select(
-            'business_customer_id, currency_code, current_balance, '
-            'total_debits, total_credits, entry_count, last_entry_at',
-          )
-          .eq('business_id', businessId);
-
-      await AppDatabase.instance.upsertCurrencyBalancesFromServer(
-        businessId,
-        rows.map((r) => Map<String, dynamic>.from(r)).toList(),
-      );
-    } catch (e) {
-      // الجدول قد لا يكون منشوراً بعد في بيئة لم يصلها ترحيل العملات —
-      // لا نكسر جولة السحب بسببه
-      debugPrint('[SyncEngine] Currency balances pull skipped: $e');
-    }
-  }
-
-  /// سحب النزاعات دورياً (Server-wins — دورة حياتها تُدار في الباكند).
   Future<void> _pullDisputes(SupabaseClient client, String businessId) async {
+    final owner = AppDatabase.instance.accountId;
+    if (owner == null) return;
     try {
-      final rows = await client
-          .from('disputes')
-          .select(
-            'id, entry_id, business_id, customer_id, reason, description, '
-            'created_at, dispute_state(status, resolution_note)',
-          )
-          .eq('business_id', businessId);
+      final rows = await collectAllPages<Map<String, dynamic>>(
+        fetchPage: (from, to) async => await client
+            .from('disputes')
+            .select(
+              'id, entry_id, business_id, customer_id, reason, description, '
+              'created_at, dispute_state(status, resolution_note)',
+            )
+            .eq('business_id', businessId)
+            .order('id')
+            .range(from, to)
+            .timeout(const Duration(seconds: 15)),
+      );
 
       for (final row in rows) {
+        if (_paused) return;
+        assertSyncAccount(
+          expected: owner,
+          current: AppDatabase.instance.accountId,
+        );
         final state = row['dispute_state'];
         String status = 'open';
         String? resolutionNote;
@@ -878,8 +1071,55 @@ class SyncEngine with WidgetsBindingObserver {
           'created_at': row['created_at'],
         });
       }
+      // Publish every dispute before requesting any conversation. A failed
+      // message page must not hide subsequent disputes from this merchant.
+      await _notify(
+        SyncState.syncing,
+        'تم تحديث قائمة الاعتراضات',
+        dataChanged: true,
+      );
+      Object? messageError;
+      StackTrace? messageStack;
+      for (final row in rows) {
+        if (_paused) return;
+        try {
+          final messages = await collectAllPages<Map<String, dynamic>>(
+            fetchPage: (from, to) async => await client
+                .from('dispute_messages')
+                .select(
+                  'id,dispute_id,sender_user_id,sender_workspace,message,created_at',
+                )
+                .eq('dispute_id', row['id'])
+                .order('id')
+                .range(from, to)
+                .timeout(const Duration(seconds: 15)),
+          );
+          assertSyncAccount(
+            expected: owner,
+            current: AppDatabase.instance.accountId,
+          );
+          for (final message in messages) {
+            await AppDatabase.instance.saveDisputeMessage({
+              ...message,
+              'sync_status': 'synced',
+              'client_request_id': null,
+            });
+          }
+        } catch (error, stack) {
+          assertSyncAccount(
+            expected: owner,
+            current: AppDatabase.instance.accountId,
+          );
+          messageError ??= error;
+          messageStack ??= stack;
+        }
+      }
+      if (messageError != null) {
+        Error.throwWithStackTrace(messageError, messageStack!);
+      }
     } catch (e) {
-      debugPrint('[SyncEngine] Disputes pull skipped: $e');
+      debugPrint('[SyncEngine] Disputes pull failed: $e');
+      rethrow;
     }
   }
 
@@ -896,56 +1136,54 @@ class SyncEngine with WidgetsBindingObserver {
     return newId;
   }
 
-  Future<String?> _getServerCheckpoint(
+  Future<void> _pullCustomerContacts(
     SupabaseClient client,
-    String deviceId,
     String businessId,
+    String accountId,
   ) async {
-    try {
-      final row = await client
-          .from('sync_checkpoints')
-          .select('cursor_value')
-          .eq('device_id', deviceId)
-          .eq('business_id', businessId)
-          .maybeSingle();
-      return row?['cursor_value'] as String?;
-    } catch (e) {
-      debugPrint('[SyncEngine] Server checkpoint read skipped: $e');
-      return null;
-    }
-  }
-
-  Future<void> _setServerCheckpoint(
-    SupabaseClient client,
-    String userId,
-    String deviceId,
-    String businessId,
-    String cursorValue,
-  ) async {
-    try {
-      final existing = await client
-          .from('sync_checkpoints')
-          .select('id')
-          .eq('device_id', deviceId)
-          .eq('business_id', businessId)
-          .maybeSingle();
-
-      if (existing != null) {
-        await client
-            .from('sync_checkpoints')
-            .update({'cursor_value': cursorValue})
-            .eq('id', existing['id']);
-      } else {
-        await client.from('sync_checkpoints').insert({
-          'user_id': userId,
-          'device_id': deviceId,
-          'business_id': businessId,
-          'cursor_value': cursorValue,
-        });
+    final db = AppDatabase.instance;
+    final rows = await db.getContactsNeedingRefresh(businessId);
+    if (rows.isEmpty) return;
+    final deviceId = await _getOrCreateDeviceId(db);
+    await client.rpc(
+      'register_customer_contact_device',
+      params: {
+        'p_device_id': deviceId,
+        'p_platform': kIsWeb
+            ? 'web'
+            : defaultTargetPlatform == TargetPlatform.iOS
+            ? 'ios'
+            : 'android',
+      },
+    );
+    for (var offset = 0; offset < rows.length; offset += 100) {
+      if (_paused) return;
+      final batch = rows.sublist(offset, min(offset + 100, rows.length));
+      final response = await client.functions.invoke(
+        'customer-contacts',
+        body: {
+          'deviceId': deviceId,
+          'businessId': businessId,
+          'customerIds': batch.map((r) => r['id']).toList(),
+        },
+      );
+      requireCloudSession(client, accountId);
+      assertSyncAccount(expected: accountId, current: db.accountId);
+      final data = response.data;
+      if (data is! Map || data['contacts'] is! List) {
+        throw StateError('Invalid contact response');
       }
-    } catch (e) {
-      // المؤشر المحلي هو المرجع الملزم — فشل مرآة السيرفر لا يكسر المزامنة
-      debugPrint('[SyncEngine] Server checkpoint write skipped: $e');
+      final requestedIds = batch.map((r) => r['id']).toSet();
+      final phones = <String, String>{};
+      for (final item in data['contacts'] as List) {
+        if (item is! Map ||
+            !requestedIds.contains(item['businessCustomerId']) ||
+            item['phone'] is! String) {
+          throw StateError('Invalid contact response');
+        }
+        phones[item['businessCustomerId'] as String] = item['phone'] as String;
+      }
+      await db.cacheCustomerContacts(businessId, batch, phones);
     }
   }
 }

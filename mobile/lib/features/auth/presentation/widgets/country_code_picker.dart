@@ -43,7 +43,7 @@ class CountryCodePickerButton extends StatelessWidget {
   void _showPicker(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -78,10 +78,12 @@ class CountryCodePickerButton extends StatelessWidget {
                   child: ListView.separated(
                     shrinkWrap: true,
                     itemCount: supportedCountries.length,
-                    separatorBuilder: (context, index) => const Divider(height: 1, color: AppColors.borderLight),
+                    separatorBuilder: (context, index) =>
+                        const Divider(height: 1, color: AppColors.borderLight),
                     itemBuilder: (context, index) {
                       final country = supportedCountries[index];
-                      final isSelected = country.dialCode == selectedCountry.dialCode;
+                      final isSelected =
+                          country.dialCode == selectedCountry.dialCode;
 
                       return ListTile(
                         onTap: () {
@@ -94,16 +96,25 @@ class CountryCodePickerButton extends StatelessWidget {
                         ),
                         title: Text(
                           country.name,
-                          style: AppTypography.bodyLarge(
-                            color: isSelected ? AppColors.secondary : AppColors.textPrimary,
-                          ).copyWith(fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500),
+                          style:
+                              AppTypography.bodyLarge(
+                                color: isSelected
+                                    ? AppColors.secondary
+                                    : AppColors.textPrimary,
+                              ).copyWith(
+                                fontWeight: isSelected
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                              ),
                         ),
                         trailing: Text(
                           country.dialCode,
                           textDirection: TextDirection.ltr,
                           style: AppTypography.financialAmount(
                             fontSize: 15,
-                            color: isSelected ? AppColors.secondary : AppColors.textSecondary,
+                            color: isSelected
+                                ? AppColors.secondary
+                                : AppColors.textSecondary,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -133,10 +144,7 @@ class CountryCodePickerButton extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              selectedCountry.flag,
-              style: const TextStyle(fontSize: 20),
-            ),
+            Text(selectedCountry.flag, style: const TextStyle(fontSize: 20)),
             const SizedBox(width: 6),
             Text(
               selectedCountry.dialCode,

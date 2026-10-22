@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:muthbat/core/database/app_database.dart';
 import 'package:muthbat/features/customer/data/customer_outbox.dart';
@@ -9,6 +10,7 @@ void main() {
   test(
     'customer outbox survives restart, deduplicates, rejects conflicting actions and isolates accounts',
     () async {
+      SharedPreferences.setMockInitialValues({});
       sqfliteFfiInit();
       AppDatabase.debugDatabaseFactory = databaseFactoryFfi;
       final folder = await Directory.systemTemp.createTemp(

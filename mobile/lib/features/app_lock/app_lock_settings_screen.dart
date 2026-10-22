@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../auth/presentation/widgets/pin_code_fields.dart';
 
 import '../../app/theme/app_colors.dart';
 import '../../core/security/app_lock_service.dart';
@@ -47,64 +48,11 @@ class _AppLockSettingsScreenState extends State<AppLockSettingsScreen> {
     required bool confirm,
     required String title,
   }) async {
-    final first = TextEditingController();
-    final second = TextEditingController();
-    String? error;
-    final result = await showDialog<String>(
+    return showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text(title),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: first,
-                autofocus: true,
-                obscureText: true,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                decoration: InputDecoration(
-                  labelText: confirm ? 'رمز جديد من 6 أرقام' : 'رمز القفل',
-                  errorText: error,
-                ),
-              ),
-              if (confirm)
-                TextField(
-                  controller: second,
-                  obscureText: true,
-                  keyboardType: TextInputType.number,
-                  maxLength: 6,
-                  decoration: const InputDecoration(labelText: 'تأكيد الرمز'),
-                ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final pin = first.text;
-                if (!RegExp(r'^\d{6}$').hasMatch(pin)) {
-                  setDialogState(() => error = 'أدخل 6 أرقام');
-                } else if (confirm && pin != second.text) {
-                  setDialogState(() => error = 'الرمزان غير متطابقين');
-                } else {
-                  Navigator.pop(dialogContext, pin);
-                }
-              },
-              child: const Text('متابعة'),
-            ),
-          ],
-        ),
-      ),
+      builder: (_) => _PinDialog(confirm: confirm, title: title),
     );
-    first.dispose();
-    second.dispose();
-    return result;
   }
 
   Future<bool> _verifyCurrentPin() async {
@@ -236,4 +184,76 @@ class _AppLockSettingsScreenState extends State<AppLockSettingsScreen> {
             ),
     );
   }
+}
+
+class _PinDialog extends StatefulWidget {
+  const _PinDialog({required this.confirm, required this.title});
+  final bool confirm;
+  final String title;
+  @override
+  State<_PinDialog> createState() => _PinDialogState();
+}
+
+class _PinDialogState extends State<_PinDialog> {
+  String first = '';
+  String second = '';
+  String? error;
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(widget.title),
+    content: SizedBox(
+      width: 340,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(widget.confirm ? 'رمز جديد من ٦ أرقام' : 'أدخل رمز القفل'),
+            const SizedBox(height: 12),
+            PinCodeFields(
+              obscureText: true,
+              onCompleted: (_) {},
+              onChanged: (v) => first = v,
+            ),
+            if (widget.confirm) ...[
+              const SizedBox(height: 20),
+              const Text('تأكيد الرمز'),
+              const SizedBox(height: 12),
+              PinCodeFields(
+                obscureText: true,
+                onCompleted: (_) {},
+                onChanged: (v) => second = v,
+              ),
+            ],
+            if (error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text(
+                  error!,
+                  style: const TextStyle(color: AppColors.error),
+                ),
+              ),
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('إلغاء'),
+      ),
+      FilledButton(
+        onPressed: () {
+          final pin = first;
+          if (!RegExp(r'^\d{6}$').hasMatch(pin)) {
+            setState(() => error = 'أدخل 6 أرقام');
+          } else if (widget.confirm && pin != second) {
+            setState(() => error = 'الرمزان غير متطابقين');
+          } else {
+            Navigator.pop(context, pin);
+          }
+        },
+        child: const Text('متابعة'),
+      ),
+    ],
+  );
 }

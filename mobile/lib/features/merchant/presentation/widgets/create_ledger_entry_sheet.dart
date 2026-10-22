@@ -2,9 +2,8 @@ import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart' hide TextDirection;
 import '../../../../app/theme/app_colors.dart';
-import '../../../../app/theme/app_typography.dart';
 import '../../../../core/finance/currency_info.dart';
 import '../../../../core/finance/money.dart';
 import '../controllers/merchant_controller.dart';
@@ -13,6 +12,17 @@ import 'attachment_picker_widget.dart';
 
 /// شاشة تسجيل العمليات المالية الاحترافية (تعدد العملات + تصنيف الأغراض وطرق السداد)
 class CreateLedgerEntrySheet extends ConsumerStatefulWidget {
+  /// One full-page entry flow shared by the dashboard and customer ledger.
+  static Future<bool?> open(
+    BuildContext context, {
+    required BusinessCustomerModel customer,
+    String initialType = 'debt',
+  }) => Navigator.of(context).push<bool>(
+    MaterialPageRoute<bool>(
+      builder: (_) =>
+          CreateLedgerEntrySheet(customer: customer, initialType: initialType),
+    ),
+  );
   final BusinessCustomerModel customer;
   final String initialType; // 'debt' or 'payment'
 
@@ -82,12 +92,14 @@ class _CreateLedgerEntrySheetState
   }
 
   void _handleSubmit() async {
+    if (_isSubmitting) return;
     if (!_formKey.currentState!.validate()) return;
 
+    final money = Money.fromCurrencyText(
+      _amountController.text.trim(),
+      decimalScale: _currencyInfo(_selectedCurrency).decimalScale,
+    );
     setState(() => _isSubmitting = true);
-
-    final money = Money.tryParse(_amountController.text.trim());
-    if (money == null) return;
     final amount = money.toDouble();
     final desc = _descController.text.trim();
     final dueDateStr = _dueDate?.toIso8601String().split('T')[0];
@@ -129,7 +141,7 @@ class _CreateLedgerEntrySheetState
                   _entryType == 'debt'
                       ? Icons.arrow_upward_rounded
                       : Icons.check_circle_rounded,
-                  color: Colors.white,
+                  color: AppColors.white,
                   size: 20,
                 ),
                 const SizedBox(width: 10),
@@ -158,186 +170,275 @@ class _CreateLedgerEntrySheetState
   @override
   Widget build(BuildContext context) {
     final isDebt = _entryType == 'debt';
-
-    return Container(
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.of(context).size.height * 0.9,
-      ),
-      padding: EdgeInsets.only(
-        left: 16,
-        right: 16,
-        top: 12,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 12,
-      ),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Form(
-        key: _formKey,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // مقبض النافذة
-              Center(
-                child: Container(
-                  width: 42,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFD1D5DB),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+    final accent = isDebt ? AppColors.debtRed : AppColors.primary;
+    return Scaffold(
+      backgroundColor: AppColors.backgroundLight,
+      appBar: AppBar(
+        toolbarHeight: 60,
+        centerTitle: false,
+        titleSpacing: 0,
+        leadingWidth: 52,
+        leading: IconButton(
+          tooltip: 'رجوع',
+          onPressed: _isSubmitting ? null : () => Navigator.maybePop(context),
+          icon: const Icon(Icons.arrow_back_rounded, size: 22),
+        ),
+        title: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: .10),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                isDebt ? Icons.north_east_rounded : Icons.south_west_rounded,
+                size: 19,
+                color: accent,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                isDebt ? 'تسجيل دين' : 'تسجيل سداد',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
                 ),
               ),
-              const SizedBox(height: 14),
-
-              // بطاقة العميل مع تفصيل أرصدة العملات
-              _buildCustomerInfoCard(),
-
-              const SizedBox(height: 16),
-
-              // 1. مفتاح التبديل الرئيسي (تسجيل دين / تسجيل سداد)
-              _buildTypeSwitcher(),
-
-              const SizedBox(height: 16),
-
-              // 2. محدد العملة المتعدد (Multi-Currency Selector)
-              _buildCurrencySelector(),
-
-              const SizedBox(height: 14),
-
-              // 3. حقل إدخال المبلغ
-              _buildAmountInput(),
-
-              const SizedBox(height: 14),
-
-              // 4. تصنيف غرض العملية / طريقة الدفع
-              if (isDebt)
-                _buildDebtCategorySelector()
-              else
-                _buildPaymentMethodSelector(),
-
-              // حقول التحويل البنكي / الصرافة التفاعلية
-              if (!isDebt && _selectedPaymentMethod == 'bank_transfer') ...[
-                const SizedBox(height: 12),
-                _buildBankTransferFields(),
-              ],
-
-              const SizedBox(height: 14),
-
-              // 5. حقل البيان والملاحظات
-              TextFormField(
-                controller: _descController,
-                maxLines: 2,
-                decoration: InputDecoration(
-                  labelText: isDebt
-                      ? 'بيان الدين / تفاصيل الأصناف أو الفاتورة'
-                      : 'ملاحظات وتفاصيل السداد',
-                  hintText: isDebt
-                      ? 'مثال: مشتريات مواد غذائية فاتورة #104'
-                      : 'مثال: دفعة من الحساب نقداً',
-                  prefixIcon: const Icon(Icons.description_outlined, size: 20),
-                  filled: true,
-                  fillColor: const Color(0xFFF9FAFB),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
-                  ),
-                ),
-                validator: (val) {
-                  if (val == null || val.trim().isEmpty) {
-                    return 'يرجى كتابة بيان مختصر للعملية';
-                  }
-                  return null;
-                },
+            ),
+            const SizedBox(width: 16),
+          ],
+        ),
+        backgroundColor: AppColors.backgroundLight,
+        foregroundColor: AppColors.textPrimary,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        shape: const Border(bottom: BorderSide(color: AppColors.borderLight)),
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+          decoration: const BoxDecoration(
+            color: AppColors.white,
+            border: Border(top: BorderSide(color: AppColors.borderLight)),
+          ),
+          child: FilledButton.icon(
+            onPressed: _isSubmitting ? null : _handleSubmit,
+            style: FilledButton.styleFrom(
+              backgroundColor: accent,
+              foregroundColor: AppColors.white,
+              minimumSize: const Size.fromHeight(54),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
               ),
-
-              const SizedBox(height: 12),
-
-              // 6. منتقي تاريخ الاستحقاق (اختياري للديون)
-              if (isDebt) _buildDueDatePicker(),
-
-              const SizedBox(height: 12),
-
-              // 7. إرفاق صورة الفاتورة / المستند
-              AttachmentPickerWidget(
-                onFileSelected: (f) => setState(() => _attachedFile = f),
-                label: 'إرفاق صورة الفاتورة / سند القبض (اختياري)',
-              ),
-
-              const SizedBox(height: 20),
-
-              // 8. زر الحفظ والتوثيق
-              SizedBox(
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: _isSubmitting ? null : _handleSubmit,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: isDebt
-                        ? AppColors.debtRed
-                        : AppColors.paymentGreen,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
+            ),
+            icon: _isSubmitting
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.white,
                     ),
-                    elevation: 0,
+                  )
+                : const Icon(Icons.check_rounded, size: 22),
+            label: Text(
+              _isSubmitting
+                  ? 'جارٍ الحفظ…'
+                  : isDebt
+                  ? 'حفظ الدين'
+                  : 'حفظ السداد',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+            ),
+          ),
+        ),
+      ),
+      body: SafeArea(
+        top: false,
+        bottom: false,
+        child: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildCustomerInfoCard(),
+                const SizedBox(height: 12),
+                _buildTypeSwitcher(),
+                const SizedBox(height: 16),
+                _sectionTitle('تفاصيل العملية', Icons.receipt_long_outlined),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.white,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: AppColors.borderLight),
                   ),
-                  child: _isSubmitting
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.2,
-                            color: Colors.white,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildAmountInput(),
+                      const SizedBox(height: 14),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final category = isDebt
+                              ? _buildDebtCategorySelector()
+                              : _buildPaymentMethodSelector();
+                          if (constraints.maxWidth < 300 ||
+                              MediaQuery.textScalerOf(context).scale(14) > 18) {
+                            return Column(
+                              children: [
+                                _buildCurrencySelector(),
+                                const SizedBox(height: 12),
+                                category,
+                              ],
+                            );
+                          }
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(child: _buildCurrencySelector()),
+                              const SizedBox(width: 10),
+                              Expanded(child: category),
+                            ],
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 14),
+                      TextFormField(
+                        controller: _descController,
+                        enabled: !_isSubmitting,
+                        minLines: 1,
+                        maxLines: 3,
+                        maxLength: 500,
+                        style: const TextStyle(fontSize: 14, height: 1.4),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 12,
                           ),
-                        )
-                      : Text(
-                          isDebt
-                              ? '✓ توثيق قيد الدين (${_currencyInfo(_selectedCurrency).symbol})'
-                              : '✓ توثيق استلام الدفعة (${_currencyInfo(_selectedCurrency).symbol})',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w800,
-                          ),
+                          counterText: '',
+                          labelText: 'البيان',
+                          alignLabelWithHint: true,
+                          hintText: isDebt
+                              ? 'اكتب سبب الدين أو تفاصيل المشتريات'
+                              : 'اكتب تفاصيل الدفعة',
+                          prefixIcon: const Icon(Icons.notes_rounded, size: 20),
                         ),
+                        validator: (value) =>
+                            value == null || value.trim().length < 2
+                            ? 'اكتب بيانًا من حرفين على الأقل'
+                            : null,
+                      ),
+                      if (!isDebt &&
+                          _selectedPaymentMethod == 'bank_transfer') ...[
+                        const SizedBox(height: 16),
+                        _buildBankTransferFields(),
+                      ],
+                    ],
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 16),
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.white,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: AppColors.borderLight),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: ExpansionTile(
+                    shape: const Border(),
+                    collapsedShape: const Border(),
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
+                    tilePadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 2,
+                    ),
+                    leading: const Icon(Icons.tune_rounded, size: 19),
+                    title: const Text(
+                      'تفاصيل إضافية',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    subtitle: Text(
+                      isDebt
+                          ? 'تاريخ الاستحقاق والمرفقات · اختياري'
+                          : 'المرفقات · اختياري',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    maintainState: true,
+                    children: [
+                      if (isDebt) ...[
+                        _buildDueDatePicker(),
+                        const SizedBox(height: 12),
+                      ],
+                      AttachmentPickerWidget(
+                        onFileSelected: (file) =>
+                            setState(() => _attachedFile = file),
+                        label: 'إرفاق فاتورة أو سند قبض',
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
+  Widget _sectionTitle(String title, IconData icon) => Row(
+    children: [
+      Icon(icon, size: 20, color: AppColors.primary),
+      const SizedBox(width: 8),
+      Text(
+        title,
+        style: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w800,
+          color: AppColors.textPrimary,
+        ),
+      ),
+    ],
+  );
+
   /// بطاقة ملخص العميل وأرصدته متعددة العملات
   Widget _buildCustomerInfoCard() {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppColors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: AppColors.borderLight),
       ),
       child: Row(
         children: [
           CircleAvatar(
-            backgroundColor: AppColors.primary,
-            radius: 20,
-            child: Text(
-              widget.customer.localDisplayName.isNotEmpty
-                  ? widget.customer.localDisplayName[0]
-                  : 'ع',
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-              ),
+            backgroundColor: AppColors.primaryContainer,
+            radius: 19,
+            child: const Icon(
+              Icons.person_outline_rounded,
+              color: AppColors.primary,
+              size: 23,
             ),
           ),
           const SizedBox(width: 12),
@@ -345,13 +446,29 @@ class _CreateLedgerEntrySheetState
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                const Text(
+                  'العميل',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textSecondary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 3),
                 Text(
                   widget.customer.localDisplayName,
-                  style: AppTypography.titleSmall(
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontFamily: 'sans-serif',
+                    fontFamilyFallback: ['Arial'],
+                    fontSize: 16,
+                    height: 1.35,
+                    fontWeight: FontWeight.w600,
                     color: AppColors.textPrimary,
-                  ).copyWith(fontWeight: FontWeight.w800),
+                  ),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 6),
                 _buildCustomerMultiCurrencyBalanceText(),
               ],
             ),
@@ -372,11 +489,9 @@ class _CreateLedgerEntrySheetState
                   ? 'عليه: ${NumberFormat('#,##0').format(bal)} ${ref.read(merchantControllerProvider).currency}'
                   : 'له: ${NumberFormat('#,##0').format(bal.abs())} ${ref.read(merchantControllerProvider).currency}'),
         style: TextStyle(
-          fontSize: 11,
+          fontSize: 13,
           fontWeight: FontWeight.w600,
-          color: bal > 0
-              ? AppColors.debtRed
-              : (bal < 0 ? AppColors.paymentGreen : AppColors.textMuted),
+          color: AppColors.balanceColor(bal),
         ),
       );
     }
@@ -395,16 +510,16 @@ class _CreateLedgerEntrySheetState
     if (balanceStrings.isEmpty) {
       return const Text(
         'الرصيد: خالص بكافة العملات (0)',
-        style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+        style: TextStyle(fontSize: 13, color: AppColors.textMuted),
       );
     }
 
     return Text(
       balanceStrings.join(' | '),
       style: const TextStyle(
-        fontSize: 11,
+        fontSize: 13,
         fontWeight: FontWeight.w700,
-        color: Color(0xFF0F766E),
+        color: AppColors.secondary,
       ),
       maxLines: 2,
       overflow: TextOverflow.ellipsis,
@@ -412,115 +527,39 @@ class _CreateLedgerEntrySheetState
   }
 
   /// مفتاح التبديل بين دين ودفعة
-  Widget _buildTypeSwitcher() {
-    final isDebt = _entryType == 'debt';
-
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF1F5F9),
-        borderRadius: BorderRadius.circular(14),
+  Widget _buildTypeSwitcher() => SegmentedButton<String>(
+    showSelectedIcon: false,
+    style: SegmentedButton.styleFrom(
+      selectedBackgroundColor: _entryType == 'debt'
+          ? AppColors.debtRed
+          : AppColors.primary,
+      selectedForegroundColor: AppColors.white,
+      backgroundColor: AppColors.white,
+      foregroundColor: AppColors.textSecondary,
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+    ),
+    segments: const [
+      ButtonSegment(
+        value: 'debt',
+        label: Text('دين'),
+        icon: Icon(Icons.north_east_rounded, size: 19),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: GestureDetector(
-              onTap: () => setState(() {
-                _entryType = 'debt';
-                _selectedCategory = 'goods';
-              }),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                decoration: BoxDecoration(
-                  color: isDebt ? AppColors.debtRed : Colors.transparent,
-                  borderRadius: BorderRadius.circular(11),
-                  boxShadow: isDebt
-                      ? [
-                          BoxShadow(
-                            color: AppColors.debtRed.withValues(alpha: 0.3),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          ),
-                        ]
-                      : null,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.add_circle_outline_rounded,
-                      size: 16,
-                      color: isDebt ? Colors.white : AppColors.textSecondary,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'تسجيل دَين (+ قيد ذمة)',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        color: isDebt ? Colors.white : AppColors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: GestureDetector(
-              onTap: () => setState(() {
-                _entryType = 'payment';
-                _selectedCategory = 'cash';
-                _selectedPaymentMethod = 'cash';
-              }),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                decoration: BoxDecoration(
-                  color: !isDebt ? AppColors.paymentGreen : Colors.transparent,
-                  borderRadius: BorderRadius.circular(11),
-                  boxShadow: !isDebt
-                      ? [
-                          BoxShadow(
-                            color: AppColors.paymentGreen.withValues(
-                              alpha: 0.3,
-                            ),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          ),
-                        ]
-                      : null,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.check_circle_outline_rounded,
-                      size: 16,
-                      color: !isDebt ? Colors.white : AppColors.textSecondary,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'تسجيل سداد (✓ قبض دفعة)',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        color: !isDebt ? Colors.white : AppColors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
+      ButtonSegment(
+        value: 'payment',
+        label: Text('سداد'),
+        icon: Icon(Icons.south_west_rounded, size: 19),
       ),
-    );
-  }
+    ],
+    selected: {_entryType},
+    onSelectionChanged: _isSubmitting
+        ? null
+        : (values) => setState(() {
+            _entryType = values.single;
+            _selectedCategory = _entryType == 'debt' ? 'goods' : 'cash';
+          }),
+  );
 
-  /// محدد العملة المتعدد
   Widget _buildCurrencySelector() {
     final supported = <String>{
       _selectedCurrency,
@@ -528,67 +567,33 @@ class _CreateLedgerEntrySheetState
       ...widget.customer.currencyBalances.keys.map(
         (code) => code.toUpperCase(),
       ),
-    }.where((code) => code.length == 3).toList();
-    final labels = <String, String>{
-      for (final code in supported)
-        code: '${_currencyInfo(code).symbol} ${_currencyInfo(code).name}',
-    };
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'العملة المالية للقيد:',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w800,
-            color: AppColors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Row(
-          children: labels.entries.map((entry) {
-            final isSelected = _selectedCurrency == entry.key;
-            return Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 3),
-                child: GestureDetector(
-                  onTap: () => setState(() => _selectedCurrency = entry.key),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? AppColors.primary
-                          : const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(11),
-                      border: Border.all(
-                        color: isSelected
-                            ? AppColors.primary
-                            : const Color(0xFFE2E8F0),
-                        width: isSelected ? 1.5 : 1,
-                      ),
-                    ),
-                    child: Center(
-                      child: Text(
-                        entry.value,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: isSelected
-                              ? FontWeight.w800
-                              : FontWeight.w600,
-                          color: isSelected
-                              ? Colors.white
-                              : AppColors.textPrimary,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
+    }.where(CurrencyCatalog.allowedCodes.contains).toList();
+    return DropdownButtonFormField<String>(
+      initialValue: _selectedCurrency,
+      isExpanded: true,
+      decoration: const InputDecoration(
+        isDense: true,
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        labelText: 'العملة',
+      ),
+      items: supported
+          .map(
+            (code) => DropdownMenuItem(
+              value: code,
+              child: Text(
+                _currencyInfo(code).name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13),
               ),
-            );
-          }).toList(),
-        ),
-      ],
+            ),
+          )
+          .toList(),
+      onChanged: _isSubmitting
+          ? null
+          : (value) {
+              if (value != null) setState(() => _selectedCurrency = value);
+            },
     );
   }
 
@@ -598,16 +603,23 @@ class _CreateLedgerEntrySheetState
 
     return TextFormField(
       controller: _amountController,
+      enabled: !_isSubmitting,
+      textDirection: TextDirection.ltr,
       keyboardType: const TextInputType.numberWithOptions(decimal: true),
       style: const TextStyle(
-        fontSize: 20,
+        fontSize: 22,
         fontWeight: FontWeight.w900,
         color: AppColors.textPrimary,
       ),
       decoration: InputDecoration(
-        labelText: 'المبلغ المالي ($currSymbol)',
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 12,
+        ),
+        labelText: 'المبلغ',
         hintText: '0.00',
-        prefixIcon: const Icon(Icons.attach_money_rounded, size: 22),
+        prefixIcon: const Icon(Icons.payments_outlined, size: 22),
         suffixText: currSymbol,
         suffixStyle: const TextStyle(
           fontSize: 14,
@@ -615,24 +627,36 @@ class _CreateLedgerEntrySheetState
           color: AppColors.primary,
         ),
         filled: true,
-        fillColor: const Color(0xFFF9FAFB),
+        fillColor: AppColors.backgroundLight,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+          borderSide: const BorderSide(color: AppColors.neutralBorder),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+          borderSide: const BorderSide(color: AppColors.neutralBorder),
         ),
       ),
       validator: (val) {
         if (val == null || val.trim().isEmpty) return 'يرجى إدخال المبلغ';
-        final parsedMoney = Money.tryParse(val.trim());
-        final parsed = parsedMoney?.toDouble();
-        if (parsed != null && !parsed.isFinite) {
+        final decimalScale = _currencyInfo(_selectedCurrency).decimalScale;
+        Money? parsedMoney;
+        try {
+          parsedMoney = Money.fromCurrencyText(
+            val.trim(),
+            decimalScale: decimalScale,
+          );
+        } on FormatException {
+          if (Money.tryParse(val.trim()) != null) {
+            return 'تسمح عملة $_selectedCurrency بـ $decimalScale منازل عشرية فقط';
+          }
+          return 'يرجى إدخال مبلغ صحيح';
+        }
+        final parsed = parsedMoney.toDouble();
+        if (!parsed.isFinite) {
           return 'Ø§Ù„Ù…Ø¨Ù„Øº ØºÙŠØ± ØµØ§Ù„Ø­';
         }
-        if (parsed != null && parsed > 9999999999999999.9999) {
+        if (parsed > 900000000000000) {
           return 'Ø§Ù„Ù…Ø¨Ù„Øº Ø£ÙƒØ¨Ø± Ù…Ù† Ø§Ù„Ø­Ø¯ Ø§Ù„Ù…Ø³Ù…ÙˆØ­';
         }
         final normalized = val.trim().replaceAll(',', '.');
@@ -642,7 +666,7 @@ class _CreateLedgerEntrySheetState
         if (fraction.length > 4) {
           return 'ÙŠØ³Ù…Ø­ Ø¨Ø£Ø±Ø¨Ø¹ Ù…Ù†Ø§Ø²Ù„ Ø¹Ø´Ø±ÙŠØ© ÙƒØ­Ø¯ Ø£Ù‚ØµÙ‰';
         }
-        if (parsed == null || parsed <= 0) {
+        if (parsed <= 0) {
           return 'يرجى إدخال رقم صحيح أكبر من الصفر';
         }
         return null;
@@ -651,103 +675,75 @@ class _CreateLedgerEntrySheetState
   }
 
   /// تصنيف غرض الدين
-  Widget _buildDebtCategorySelector() {
-    final categories = [
-      {'key': 'goods', 'label': '📦 بضاعة / مشتريات'},
-      {'key': 'cash', 'label': '💵 نقد / قرض مالي'},
-      {'key': 'service', 'label': '🛠️ خدمة / عمل'},
-      {'key': 'transfer', 'label': '🔄 حوالة عن العميل'},
-    ];
+  Widget _buildDebtCategorySelector() => _selectionField(
+    label: 'التصنيف',
+    value: _selectedCategory,
+    icon: Icons.category_outlined,
+    choices: const {
+      'goods': 'بضاعة / مشتريات',
+      'cash': 'نقد / قرض مالي',
+      'service': 'خدمة / عمل',
+      'transfer': 'حوالة عن العميل',
+    },
+    onChanged: (value) => setState(() => _selectedCategory = value),
+  );
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'غرض ونوع الدين:',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w800,
-            color: AppColors.textPrimary,
+  Widget _buildPaymentMethodSelector() => _selectionField(
+    label: 'طريقة السداد',
+    value: _selectedPaymentMethod,
+    icon: Icons.account_balance_wallet_outlined,
+    choices: const {
+      'cash': 'نقدًا',
+      'bank_transfer': 'تحويل بنكي / صرافة',
+      'cheque': 'شيك / كمبيالة',
+      'offset': 'مقاصة / تسوية',
+    },
+    onChanged: (value) => setState(() => _selectedPaymentMethod = value),
+  );
+
+  Widget _selectionField({
+    required String label,
+    required String value,
+    required IconData icon,
+    required Map<String, String> choices,
+    required ValueChanged<String> onChanged,
+  }) => DropdownButtonFormField<String>(
+    key: ValueKey(label),
+    initialValue: value,
+    isExpanded: true,
+    decoration: InputDecoration(
+      isDense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      labelText: label,
+    ),
+    items: choices.entries
+        .map(
+          (entry) => DropdownMenuItem(
+            value: entry.key,
+            child: Text(
+              entry.value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13),
+            ),
           ),
-        ),
-        const SizedBox(height: 6),
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: categories.map((cat) {
-            final isSelected = _selectedCategory == cat['key'];
-            return ChoiceChip(
-              label: Text(cat['label']!),
-              selected: isSelected,
-              selectedColor: AppColors.primaryContainer,
-              labelStyle: TextStyle(
-                fontSize: 11,
-                fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
-                color: isSelected ? AppColors.primary : AppColors.textSecondary,
-              ),
-              onSelected: (_) =>
-                  setState(() => _selectedCategory = cat['key']!),
-            );
-          }).toList(),
-        ),
-      ],
-    );
-  }
-
-  /// تصنيف طريقة السداد
-  Widget _buildPaymentMethodSelector() {
-    final methods = [
-      {'key': 'cash', 'label': '💵 نقداً (كاش)'},
-      {'key': 'bank_transfer', 'label': '🏦 تحويل بنكي / صرافة'},
-      {'key': 'cheque', 'label': '📝 شيك / كمبيالة'},
-      {'key': 'offset', 'label': '🤝 مقاصة / تسوية'},
-    ];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'طريقة استلام الدفعة:',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w800,
-            color: AppColors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: methods.map((m) {
-            final isSelected = _selectedPaymentMethod == m['key'];
-            return ChoiceChip(
-              label: Text(m['label']!),
-              selected: isSelected,
-              selectedColor: AppColors.paymentGreen.withValues(alpha: 0.15),
-              labelStyle: TextStyle(
-                fontSize: 11,
-                fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
-                color: isSelected
-                    ? AppColors.paymentGreen
-                    : AppColors.textSecondary,
-              ),
-              onSelected: (_) =>
-                  setState(() => _selectedPaymentMethod = m['key']!),
-            );
-          }).toList(),
-        ),
-      ],
-    );
-  }
+        )
+        .toList(),
+    onChanged: _isSubmitting
+        ? null
+        : (selected) {
+            if (selected != null) onChanged(selected);
+          },
+  );
 
   /// حقول تفاصيل التحويل البنكي / الصرافة
   Widget _buildBankTransferFields() {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF0FDF4),
+        color: AppColors.successSurfaceSoft,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFBBF7D0)),
+        border: Border.all(color: AppColors.successBorder),
       ),
       child: Column(
         children: [
@@ -796,9 +792,9 @@ class _CreateLedgerEntrySheetState
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: const Color(0xFFF9FAFB),
+          color: AppColors.backgroundLight,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFE5E7EB)),
+          border: Border.all(color: AppColors.borderLight),
         ),
         child: Row(
           children: [
@@ -814,7 +810,7 @@ class _CreateLedgerEntrySheetState
               child: Text(
                 dateText,
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 14,
                   fontWeight: _dueDate != null
                       ? FontWeight.w700
                       : FontWeight.w500,

@@ -1,12 +1,14 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:muthbat/core/database/app_database.dart';
 import 'package:muthbat/core/sync/sync_policy.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => SharedPreferences.setMockInitialValues({}));
 
   test(
     'pagination drains every page beyond the 500-row server limit',

@@ -67,7 +67,7 @@ class MuthbatBottomNav extends StatelessWidget {
                         decoration: BoxDecoration(
                           color: selected
                               ? AppColors.primaryContainer
-                              : Colors.transparent,
+                              : AppColors.transparent,
                           borderRadius: AppDecorations.roundedMedium,
                         ),
                         child: Column(

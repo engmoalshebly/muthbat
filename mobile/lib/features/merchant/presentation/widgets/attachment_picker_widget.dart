@@ -45,11 +45,11 @@ class _AttachmentPickerWidgetState extends State<AttachmentPickerWidget> {
   void _showPickerOptions() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.transparent,
+      backgroundColor: AppColors.transparent,
       builder: (ctx) => Container(
         padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
         decoration: const BoxDecoration(
-          color: Colors.white,
+          color: AppColors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         ),
         child: Column(
@@ -85,13 +85,26 @@ class _AttachmentPickerWidgetState extends State<AttachmentPickerWidget> {
                       decoration: BoxDecoration(
                         color: AppColors.primaryLight.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: AppColors.primaryLight.withValues(alpha: 0.3)),
+                        border: Border.all(
+                          color: AppColors.primaryLight.withValues(alpha: 0.3),
+                        ),
                       ),
                       child: const Column(
                         children: [
-                          Icon(Icons.camera_alt_rounded, size: 32, color: AppColors.primary),
+                          Icon(
+                            Icons.camera_alt_rounded,
+                            size: 32,
+                            color: AppColors.primary,
+                          ),
                           SizedBox(height: 8),
-                          Text('التقاط بالكاميرا', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.primary)),
+                          Text(
+                            'التقاط بالكاميرا',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                              color: AppColors.primary,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -110,13 +123,26 @@ class _AttachmentPickerWidgetState extends State<AttachmentPickerWidget> {
                       decoration: BoxDecoration(
                         color: AppColors.secondary.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: AppColors.secondary.withValues(alpha: 0.3)),
+                        border: Border.all(
+                          color: AppColors.secondary.withValues(alpha: 0.3),
+                        ),
                       ),
                       child: const Column(
                         children: [
-                          Icon(Icons.photo_library_rounded, size: 32, color: AppColors.secondary),
+                          Icon(
+                            Icons.photo_library_rounded,
+                            size: 32,
+                            color: AppColors.secondary,
+                          ),
                           SizedBox(height: 8),
-                          Text('اختيار من المعرض', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.secondary)),
+                          Text(
+                            'اختيار من المعرض',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                              color: AppColors.secondary,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -165,25 +191,39 @@ class _AttachmentPickerWidgetState extends State<AttachmentPickerWidget> {
                 children: [
                   const Row(
                     children: [
-                      Icon(Icons.check_circle_rounded, size: 14, color: AppColors.success),
+                      Icon(
+                        Icons.check_circle_rounded,
+                        size: 14,
+                        color: AppColors.success,
+                      ),
                       SizedBox(width: 4),
                       Text(
                         'تم اختيار المرفق بنجاح',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: AppColors.success),
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                          color: AppColors.success,
+                        ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 2),
                   Text(
                     'الحجم: $sizeKb ك.ب',
-                    style: AppTypography.caption(color: AppColors.textSecondary),
+                    style: AppTypography.caption(
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                 ],
               ),
             ),
             IconButton(
               tooltip: 'حذف المرفق',
-              icon: const Icon(Icons.delete_outline_rounded, color: AppColors.debtRed, size: 20),
+              icon: const Icon(
+                Icons.delete_outline_rounded,
+                color: AppColors.debtRed,
+                size: 20,
+              ),
               onPressed: _removeFile,
             ),
           ],
@@ -203,7 +243,11 @@ class _AttachmentPickerWidgetState extends State<AttachmentPickerWidget> {
         ),
         child: Row(
           children: [
-            const Icon(Icons.attach_file_rounded, color: AppColors.textSecondary, size: 20),
+            const Icon(
+              Icons.attach_file_rounded,
+              color: AppColors.textSecondary,
+              size: 20,
+            ),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
@@ -219,7 +263,11 @@ class _AttachmentPickerWidgetState extends State<AttachmentPickerWidget> {
               ),
               child: const Text(
                 'إضافة',
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary),
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primary,
+                ),
               ),
             ),
           ],

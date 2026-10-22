@@ -6,8 +6,8 @@ class AppDecorations {
   AppDecorations._();
 
   static const double radiusSmall = 8.0;
-  static const double radiusMedium = 14.0;
-  static const double radiusLarge = 20.0;
+  static const double radiusMedium = 16.0;
+  static const double radiusLarge = 24.0;
   static const double radiusPill = 999.0;
 
   static final BorderRadius roundedSmall = BorderRadius.circular(radiusSmall);
@@ -18,12 +18,12 @@ class AppDecorations {
   // ظلال ناعمة مالية (FinTech Subtle Shadows)
   static final List<BoxShadow> cardShadow = [
     BoxShadow(
-      color: const Color(0xFF123B46).withValues(alpha: 0.06),
+      color: AppColors.primary.withValues(alpha: 0.06),
       blurRadius: 16,
       offset: const Offset(0, 4),
     ),
     BoxShadow(
-      color: const Color(0xFF123B46).withValues(alpha: 0.02),
+      color: AppColors.primary.withValues(alpha: 0.02),
       blurRadius: 4,
       offset: const Offset(0, 1),
     ),
@@ -31,7 +31,7 @@ class AppDecorations {
 
   static final List<BoxShadow> elevatedShadow = [
     BoxShadow(
-      color: const Color(0xFF123B46).withValues(alpha: 0.12),
+      color: AppColors.primary.withValues(alpha: 0.12),
       blurRadius: 24,
       offset: const Offset(0, 8),
     ),

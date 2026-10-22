@@ -19,8 +19,10 @@ Deno.serve(async (request) => {
   if (methodError) return methodError;
   try {
     const { user } = await requireUser(request);
-    if (user.app_metadata?.phone_verification_bypassed === true ||
-        Deno.env.get("ALLOW_STAGING_DIRECT_AUTH") === "true") {
+    const allowStagingUnverifiedLinks = Deno.env.get("APP_ENV") === "staging" &&
+      Deno.env.get("ALLOW_STAGING_UNVERIFIED_PHONE_LINKS") === "true";
+    const isUnverifiedStagingAccount = user.app_metadata?.phone_verification_bypassed === true;
+    if (isUnverifiedStagingAccount && !allowStagingUnverifiedLinks) {
       return errorResponse(request, 403, "verified_phone_required", "Phone ownership verification is required before linking customer records.");
     }
     // تُستدعى بعد تحقق تحدي WhatsApp الخادمي وإنشاء جلسة Supabase الرسمية؛
@@ -47,6 +49,7 @@ Deno.serve(async (request) => {
       p_phone_ciphertext: await encryptPhone(phone),
       p_phone_last4: phone.slice(-4),
       p_key_version: phoneKeyVersion(),
+      p_allow_unverified_staging: isUnverifiedStagingAccount && allowStagingUnverifiedLinks,
     });
     if (error) {
       if (error.code === "23505") return errorResponse(request, 409, "phone_link_conflict", "This phone needs an account ownership review.");

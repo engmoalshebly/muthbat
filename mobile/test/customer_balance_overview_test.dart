@@ -33,7 +33,7 @@ void main() {
     expect(find.text('100 YER'), findsOneWidget);
     expect(find.text('20 YER'), findsOneWidget);
     expect(find.text('5 SAR'), findsOneWidget);
-    expect(find.text('2 بقالات مرتبطة بحسابك'), findsOneWidget);
+    expect(find.text('2 بقالات'), findsOneWidget);
     expect(find.text('80 YER'), findsNothing);
     expect(tester.takeException(), isNull);
   });

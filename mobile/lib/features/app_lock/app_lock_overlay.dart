@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../app/theme/app_colors.dart';
 
 import '../../core/security/app_lock_service.dart';
 import 'app_lock_screen.dart';
@@ -78,9 +79,23 @@ class _AppLockOverlayState extends State<AppLockOverlay>
       children: [
         widget.child,
         if (_checkingInitial)
-          const Positioned.fill(child: ColoredBox(color: Color(0xFF153E3A))),
+          const Positioned.fill(
+            child: ColoredBox(color: AppColors.primaryDark),
+          ),
         if (_locked)
-          AppLockScreen(onUnlocked: () => setState(() => _locked = false)),
+          Positioned.fill(
+            // This sibling of the app Navigator must never inherit its
+            // HeroControllerScope from MaterialApp.
+            child: HeroControllerScope.none(
+              child: Navigator(
+                onGenerateRoute: (_) => MaterialPageRoute<void>(
+                  builder: (_) => AppLockScreen(
+                    onUnlocked: () => setState(() => _locked = false),
+                  ),
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }

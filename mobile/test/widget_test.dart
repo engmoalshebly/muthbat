@@ -9,12 +9,15 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:muthbat/core/database/app_database.dart';
 import 'package:muthbat/features/local_ledger/local_ledger_screen.dart';
 import 'package:muthbat/features/local_ledger/local_ledger_store.dart';
+import 'package:muthbat/features/splash/presentation/screens/welcome_screen.dart';
 
 void main() {
   testWidgets(
-    'MuthbatApp boots into local notebook without Supabase or an account',
+    'returning user boots into local notebook without Supabase or an account',
     (WidgetTester tester) async {
-      SharedPreferences.setMockInitialValues({});
+      SharedPreferences.setMockInitialValues({
+        WelcomeScreen.completedKey: true,
+      });
       FlutterSecureStorage.setMockInitialValues({});
       sqfliteFfiInit();
       AppDatabase.debugDatabaseFactory = databaseFactoryFfi;

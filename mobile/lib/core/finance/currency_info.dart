@@ -46,6 +46,8 @@ class CurrencyInfo {
 class CurrencyCatalog {
   CurrencyCatalog._();
 
+  static const allowedCodes = {'YER', 'SAR', 'USD'};
+
   static const defaults = <CurrencyInfo>[
     CurrencyInfo(
       code: 'YER',
@@ -105,6 +107,10 @@ class CurrencyCatalog {
     CurrencyInfo(code: 'JPY', name: 'ين ياباني', symbol: '¥', decimalScale: 0),
   ];
 
+  // Historical entries remain readable with their original precision.
+  // These currencies are not available for new merchant operations.
+  static const legacy = <CurrencyInfo>[];
+
   static CurrencyInfo forCode(
     String code, [
     Iterable<CurrencyInfo> source = defaults,
@@ -120,7 +126,7 @@ class CurrencyCatalog {
       return candidate;
     }
 
-    return defaults.cast<CurrencyInfo?>().firstWhere(
+    return [...defaults, ...legacy].cast<CurrencyInfo?>().firstWhere(
           (currency) => currency?.code == upper,
           orElse: () => null,
         ) ??

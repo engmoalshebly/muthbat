@@ -1,0 +1,7 @@
+{
+    "APP_ENV":  "prod",
+    "PHONE_VERIFICATION_ENABLED":  true,
+    "ALLOW_STAGING_UNVERIFIED_PHONE_LINKS":  false,
+    "SUPABASE_URL":  "https://sgnbtrcbllnffcyzsjei.supabase.co",
+    "SUPABASE_ANON_KEY":  "sb_publishable_FCoMw-maX6ZjV123PIly5w_ZsfEwsUW"
+}

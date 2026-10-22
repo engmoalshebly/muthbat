@@ -3,9 +3,11 @@ class DisputeModel {
   final String entryId;
   final String businessId;
   final String customerId;
-  final String reason; // 'incorrect_amount', 'duplicate_entry', 'unrecognized_transaction', 'goods_not_received', 'payment_not_reflected', 'other'
+  final String
+  reason; // 'incorrect_amount', 'duplicate_entry', 'unrecognized_transaction', 'goods_not_received', 'payment_not_reflected', 'other'
   final String description;
-  final String status; // 'awaiting_merchant', 'awaiting_customer', 'accepted', 'partially_accepted', 'rejected', 'escalated'
+  final String
+  status; // 'awaiting_merchant', 'awaiting_customer', 'accepted', 'partially_accepted', 'rejected', 'escalated'
   final String? resolutionNote;
   final String? resolvedAt;
   final String? createdAt;
@@ -18,6 +20,7 @@ class DisputeModel {
   final String? entryDescription;
   final String? entryType;
   final String? entryOccurredAt;
+  final String? currencyCode;
 
   const DisputeModel({
     required this.id,
@@ -37,6 +40,7 @@ class DisputeModel {
     this.entryDescription,
     this.entryType,
     this.entryOccurredAt,
+    this.currencyCode,
   });
 
   factory DisputeModel.fromMap(Map<String, dynamic> map) {
@@ -46,7 +50,9 @@ class DisputeModel {
     // (لا يوجد FK باسم profiles!customer_id — خطة 06 خطوة 3.3)
     final entryCustomer = entry?['business_customers'] as Map<String, dynamic>?;
     final customer = map['customers'] as Map<String, dynamic>?;
-    final state = map['dispute_state'] is List && (map['dispute_state'] as List).isNotEmpty
+    final state =
+        map['dispute_state'] is List &&
+            (map['dispute_state'] as List).isNotEmpty
         ? (map['dispute_state'] as List).first as Map<String, dynamic>
         : (map['dispute_state'] as Map<String, dynamic>?);
 
@@ -57,20 +63,38 @@ class DisputeModel {
       customerId: map['customer_id'] as String,
       reason: map['reason'] as String? ?? 'other',
       description: map['description'] as String? ?? '',
-      status: (state != null ? state['status'] : map['status']) as String? ?? 'awaiting_merchant',
-      resolutionNote: (state != null ? state['resolution_note'] : map['resolution_note']) as String?,
-      resolvedAt: (state != null ? state['resolved_at'] : map['resolved_at']) as String?,
+      status:
+          (state != null ? state['status'] : map['status']) as String? ??
+          'awaiting_merchant',
+      resolutionNote:
+          (state != null ? state['resolution_note'] : map['resolution_note'])
+              as String?,
+      resolvedAt:
+          (state != null ? state['resolved_at'] : map['resolved_at'])
+              as String?,
       createdAt: map['created_at'] as String?,
-      customerDisplayName: entryCustomer?['local_display_name'] as String? ??
+      customerDisplayName:
+          entryCustomer?['local_display_name'] as String? ??
           map['local_display_name'] as String? ??
           (customer != null ? customer['full_name'] as String? : null),
       customerPhone: map['phone'] as String?,
-      customerGlobalCode: (customer != null ? customer['global_code'] as String? : null) ??
+      customerGlobalCode:
+          (customer != null ? customer['global_code'] as String? : null) ??
           map['global_code'] as String?,
-      entryAmount: entry != null ? (entry['amount'] as num?)?.toDouble() : (map['entry_amount'] as num?)?.toDouble(),
-      entryDescription: entry != null ? entry['description'] as String? : map['entry_description'] as String?,
-      entryType: entry != null ? entry['entry_type'] as String? : map['entry_type'] as String?,
-      entryOccurredAt: entry != null ? entry['occurred_at'] as String? : map['entry_occurred_at'] as String?,
+      entryAmount: entry != null
+          ? (entry['amount'] as num?)?.toDouble()
+          : (map['entry_amount'] as num?)?.toDouble(),
+      entryDescription: entry != null
+          ? entry['description'] as String?
+          : map['entry_description'] as String?,
+      entryType: entry != null
+          ? entry['entry_type'] as String?
+          : map['entry_type'] as String?,
+      entryOccurredAt: entry != null
+          ? entry['occurred_at'] as String?
+          : map['entry_occurred_at'] as String?,
+      currencyCode:
+          (entry?['currency_code'] ?? map['currency_code']) as String?,
     );
   }
 
@@ -86,11 +110,19 @@ class DisputeModel {
       'resolution_note': resolutionNote,
       'resolved_at': resolvedAt,
       'created_at': createdAt,
+      'currency_code': currencyCode,
     };
   }
 
-  bool get isOpen => status == 'awaiting_merchant' || status == 'awaiting_customer' || status == 'open' || status == 'escalated';
-  bool get isResolved => status == 'accepted' || status == 'partially_accepted' || status == 'rejected';
+  bool get isOpen =>
+      status == 'awaiting_merchant' ||
+      status == 'awaiting_customer' ||
+      status == 'open' ||
+      status == 'escalated';
+  bool get isResolved =>
+      status == 'accepted' ||
+      status == 'partially_accepted' ||
+      status == 'rejected';
 
   String get reasonLocalized {
     switch (reason) {
@@ -131,11 +163,11 @@ class DisputeModel {
       case 'awaiting_customer':
         return 'بانتظار رد العميل';
       case 'accepted':
-        return 'تم القبول (معكوس)';
+        return 'قُبل الاعتراض وأُلغي أثر العملية';
       case 'partially_accepted':
-        return 'تم القبول الجزئي';
+        return 'قُبل الاعتراض وصُحح المبلغ';
       case 'rejected':
-        return 'تم الرفض';
+        return 'رُفض الاعتراض وبقي المبلغ كما هو';
       case 'escalated':
         return 'مُصعّد للإدارة';
       case 'open':

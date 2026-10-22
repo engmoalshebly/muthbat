@@ -1,6 +1,11 @@
+import '../../app/theme/app_typography.dart';
+import 'local_pdf_preview.dart';
+import '../../shared/widgets/brand_logo.dart';
+import '../../core/security/cloud_session.dart';
 import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'package:file_saver/file_saver.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -12,14 +17,20 @@ import '../../app/router/app_routes.dart';
 import '../../app/theme/app_colors.dart';
 import '../../core/config/supabase_config.dart';
 import '../../core/database/db_encryption.dart';
+import '../../core/database/app_database.dart';
 import '../auth/presentation/controllers/auth_controller.dart';
 import '../auth/presentation/validators/auth_validators.dart';
 import 'local_ledger_store.dart';
+import '../auth/presentation/workspace_preference.dart';
+import '../auth/presentation/widgets/workspace_switcher.dart';
+import 'local_transfer_backup.dart';
 import 'local_palette.dart';
+import '../../app/theme/app_icons.dart';
 import 'local_ledger_pdf.dart';
 import 'local_analytics.dart';
 import 'local_directory.dart';
 import 'local_entry_screen.dart';
+import 'local_customer_screen.dart';
 
 /// The local route does not instantiate AuthController or wait for the network.
 class LocalLedgerScreen extends StatefulWidget {
@@ -30,6 +41,16 @@ class LocalLedgerScreen extends StatefulWidget {
 }
 
 class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
+  ButtonStyle get _headerActionStyle => IconButton.styleFrom(
+    foregroundColor: AppColors.primary,
+    backgroundColor: AppColors.primaryContainer,
+    disabledBackgroundColor: AppColors.surfaceContainerSoft,
+    disabledForegroundColor: AppColors.textMuted,
+    minimumSize: const Size(38, 38),
+    maximumSize: const Size(38, 38),
+    padding: const EdgeInsets.all(9),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(11)),
+  );
   LocalLedgerStore get store => widget.store ?? LocalLedgerStore.instance;
   JsonMap? doc;
   String? error;
@@ -39,44 +60,53 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
   String? selected;
   int tab = 0;
 
-  Widget _quickAction(IconData icon, String label, VoidCallback? onTap) =>
-      Material(
-        color: onTap == null ? Colors.white : LocalPalette.mint,
-        borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 6),
-            child: Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: onTap == null ? Colors.white : LocalPalette.teal,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    icon,
-                    size: 24,
-                    color: onTap == null ? AppColors.textMuted : Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  label,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: LocalPalette.ink,
-                  ),
-                ),
-              ],
+  Widget _quickAction(
+    IconData icon,
+    String label,
+    VoidCallback? onTap, {
+    Color tint = AppColors.primary,
+  }) => Material(
+    color: AppColors.surfaceLight,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(20),
+      side: const BorderSide(color: AppColors.borderLight),
+    ),
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(9),
+              decoration: BoxDecoration(
+                color: onTap == null
+                    ? AppColors.surfaceContainerSoft
+                    : tint.withValues(alpha: .10),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Icon(
+                icon,
+                size: 20,
+                color: onTap == null ? AppColors.textMuted : tint,
+              ),
             ),
-          ),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ],
         ),
-      );
+      ),
+    ),
+  );
 
   Future<void> openAccount() async {
     if (!SupabaseConfig.cloudReady) {
@@ -89,7 +119,20 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
     final transferred =
         doc?['transfer_state'] == 'complete' &&
         doc?['owner_id'] == account.userId;
-    final route = account.status != AuthStatus.authenticated
+    if (transferred) {
+      final businessId = doc?['server_business_id'] as String?;
+      if (businessId == null) {
+        throw StateError('معرّف النشاط المنقول غير موجود.');
+      }
+      if (account.activeBusinessId != businessId ||
+          !account.businessAccessChecked) {
+        await container
+            .read(authControllerProvider.notifier)
+            .activateImportedBusiness(businessId);
+        if (!mounted) return;
+      }
+    }
+    final route = !account.hasLocalAccess
         ? AppRoutes.login
         : transferred
         ? AppRoutes.merchantHome
@@ -98,6 +141,13 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
         : account.requiresBusinessSetup
         ? AppRoutes.businessSetup
         : AppRoutes.merchantHome;
+    if (route == AppRoutes.customerHome || route == AppRoutes.merchantHome) {
+      await WorkspacePreference.save(
+        account.userId,
+        route == AppRoutes.customerHome ? 'customer' : 'merchant',
+      );
+      if (!mounted) return;
+    }
     await Navigator.pushNamed(context, route);
     await reload();
   }
@@ -111,6 +161,357 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
       ),
       'muthbat-backup-${DateTime.now().millisecondsSinceEpoch}.json',
       'application/json',
+    );
+  }
+
+  Future<void> saveLocalBackup() async {
+    final password = await _promptBackupPassword();
+    if (password == null || !mounted) return;
+    final contents = await store.backup(
+      password: password.isEmpty ? null : password,
+    );
+    final path = await FileSaver.instance.saveAs(
+      name: 'muthbat-backup-${DateTime.now().millisecondsSinceEpoch}',
+      bytes: Uint8List.fromList(utf8.encode(contents)),
+      fileExtension: 'json',
+      mimeType: MimeType.custom,
+      customMimeType: 'application/json',
+    );
+    if (!mounted || path == null || path.isEmpty) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(
+          Icons.check_circle_rounded,
+          color: AppColors.success,
+          size: 36,
+        ),
+        title: const Text('تم حفظ النسخة بنجاح', textAlign: TextAlign.center),
+        content: const Text(
+          'يمكنك الوصول إلى نسختك الاحتياطية من تطبيق الملفات واستعادتها عند الحاجة.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: AppColors.textSecondary, height: 1.6),
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('حسنًا'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> openSettings() async {
+    bool working = false;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (settingsContext) => StatefulBuilder(
+          builder: (settingsContext, update) {
+            Future<void> action(Future<void> Function() task) async {
+              if (working) return;
+              update(() => working = true);
+              try {
+                await run(task);
+              } finally {
+                if (settingsContext.mounted) update(() => working = false);
+              }
+            }
+
+            Widget option(
+              IconData icon,
+              String title,
+              String subtitle,
+              Future<void> Function()? task,
+            ) => Card(
+              elevation: 0,
+              margin: const EdgeInsets.only(bottom: 7),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(13),
+                side: const BorderSide(color: AppColors.borderLight),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 3,
+                ),
+                leading: Container(
+                  padding: const EdgeInsets.all(9),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryContainer,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, color: AppColors.primary, size: 19),
+                ),
+                title: Text(
+                  title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                subtitle: Text(
+                  subtitle,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                    height: 1.5,
+                  ),
+                ),
+                trailing: const Icon(
+                  AppIcons.chevronEnd,
+                  size: 16,
+                  color: AppColors.textMuted,
+                ),
+                onTap: working || task == null ? null : () => action(task),
+              ),
+            );
+            return Scaffold(
+              backgroundColor: AppColors.backgroundLight,
+              appBar: AppBar(
+                backgroundColor: AppColors.backgroundLight,
+                foregroundColor: AppColors.textPrimary,
+                toolbarHeight: 56,
+                titleSpacing: 4,
+                title: const Text(
+                  'الإعدادات',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                ),
+                actions: const [
+                  Padding(
+                    padding: EdgeInsetsDirectional.only(end: 16),
+                    child: BrandLogo.icon(width: 35, height: 35),
+                  ),
+                ],
+              ),
+              body: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  if (working) const LinearProgressIndicator(),
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 20),
+                    padding: const EdgeInsets.all(15),
+                    decoration: BoxDecoration(
+                      gradient: AppColors.cardGradient,
+                      borderRadius: BorderRadius.circular(17),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: AppColors.white.withValues(alpha: .14),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.tune_rounded,
+                            size: 24,
+                            color: AppColors.white,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                doc?['name']?.toString() ?? 'مُثبَت',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 21,
+                                  fontWeight: FontWeight.w800,
+                                  color: AppColors.white,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              const Text(
+                                'دفاترك، نسخك الاحتياطية وحماية حسابك',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: AppColors.textWhiteSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Text(
+                    'دفاتر الحساب',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.primaryDark,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'اختر الدفتر الذي تريد العمل عليه.',
+                    style: TextStyle(color: AppColors.textSecondary),
+                  ),
+                  const SizedBox(height: 16),
+                  option(
+                    Icons.library_books_outlined,
+                    'التبديل بين الدفاتر',
+                    'فتح الدفتر الأصلي أو أي نسخة مستعادة',
+                    () async {
+                      final notebooks = await store.notebooks();
+                      if (!settingsContext.mounted) return;
+                      final id = await showModalBottomSheet<String>(
+                        context: settingsContext,
+                        isScrollControlled: true,
+                        builder: (sheetContext) => SafeArea(
+                          child: SizedBox(
+                            height: MediaQuery.sizeOf(sheetContext).height * .6,
+                            child: Column(
+                              children: [
+                                const Padding(
+                                  padding: EdgeInsets.all(16),
+                                  child: Text(
+                                    'دفاتر الحساب',
+                                    style: TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: ListView.builder(
+                                    itemCount: notebooks.length,
+                                    itemBuilder: (_, i) {
+                                      final notebook = notebooks[i];
+                                      final active =
+                                          notebook['id'] == doc?['id'];
+                                      return ListTile(
+                                        leading: Icon(
+                                          active
+                                              ? Icons.check_circle_rounded
+                                              : Icons.book_outlined,
+                                          color: AppColors.primary,
+                                        ),
+                                        title: Text(
+                                          notebook['name'].toString(),
+                                        ),
+                                        subtitle: Text(
+                                          '${(notebook['customers'] as List).length} عميل • ${(notebook['entries'] as List).length} حركة • ${notebook['currency']}',
+                                        ),
+                                        trailing: active
+                                            ? const Text('الحالي')
+                                            : null,
+                                        onTap: () => Navigator.pop(
+                                          sheetContext,
+                                          notebook['id'].toString(),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                      if (id == null || !mounted) return;
+                      await store.selectNotebook(id);
+                      setState(() {
+                        selected = null;
+                        tab = 0;
+                      });
+                      await reload();
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'النسخ الاحتياطي والاستعادة',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.primaryDark,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  option(
+                    Icons.save_alt_rounded,
+                    'حفظ نسخة على الجهاز',
+                    'اختر مجلدًا على الجهاز لحفظ ملف النسخة',
+                    doc == null ? null : saveLocalBackup,
+                  ),
+                  option(
+                    AppIcons.share,
+                    'مشاركة نسخة احتياطية',
+                    'إنشاء ملف ومشاركته مع اختيار حماية بكلمة مرور',
+                    doc == null ? null : backup,
+                  ),
+                  const SizedBox(height: 12),
+                  option(
+                    Icons.restore_rounded,
+                    'استعادة من ملف',
+                    'اختيار نسخة احتياطية بصيغة JSON',
+                    restore,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    doc != null
+                        ? 'تُفتح النسخة المستعادة كدفتر منفصل، مع الاحتفاظ بدفترك الحالي.'
+                        : 'أنشئ دفترًا أو استعد نسخة لتفعيل خيارات الحفظ.',
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  const Text(
+                    'الأمان',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.primaryDark,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  option(
+                    AppIcons.lock,
+                    'قفل التطبيق والبصمة',
+                    'إدارة حماية الدخول على هذا الجهاز',
+                    () async {
+                      await Navigator.pushNamed(
+                        settingsContext,
+                        AppRoutes.appLockSettings,
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'المساعدة',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.primaryDark,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  option(
+                    AppIcons.whatsapp,
+                    'دردشة الدعم',
+                    'التواصل مع فريق الدعم',
+                    () async {
+                      await Navigator.pushNamed(
+                        settingsContext,
+                        AppRoutes.daraiChat,
+                      );
+                    },
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
     );
   }
 
@@ -162,7 +563,7 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                   ],
                   if (error != null) ...[
                     const SizedBox(height: 8),
-                    Text(error!, style: const TextStyle(color: Colors.red)),
+                    Text(error!, style: const TextStyle(color: AppColors.red)),
                   ],
                 ],
               ),
@@ -202,30 +603,29 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
 
   Widget accountPanel(JsonMap d) {
     final complete = d['transfer_state'] == 'complete';
-    final pending = d['transfer_state'] != 'local' && !complete;
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
         Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
             gradient: LocalPalette.hero,
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(18),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Icon(
-                Icons.storefront_rounded,
+                Icons.menu_book_rounded,
                 color: LocalPalette.gold,
-                size: 28,
+                size: 32,
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               Text(
-                d['name'],
+                d['name'].toString(),
                 style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
+                  color: AppColors.white,
+                  fontSize: 20,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -233,93 +633,43 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
               Text(
                 complete
                     ? 'نسخة محلية محفوظة بعد النقل'
-                    : 'دفترك يعمل دون إنترنت ودون اشتراك',
-                style: const TextStyle(color: Colors.white),
+                    : 'دفتر حساب محلي • يعمل دون إنترنت',
+                style: const TextStyle(color: AppColors.white),
               ),
             ],
           ),
         ),
         const SizedBox(height: 16),
-        Text(
-          complete ? 'تم نقل دفتر حسابك' : 'انتقل إلى حساب تاجر، بنفس بياناتك',
-          style: Theme.of(context).textTheme.titleLarge,
-        ),
-        const SizedBox(height: 12),
-        const Text(
-          'الحساب اختياري. تسجيل الدخول وحده لا ينقل الدفتر؛ ستراجع البيانات وتؤكد الربط أولًا.',
-        ),
-        const SizedBox(height: 16),
-        ExpansionTile(
-          tilePadding: EdgeInsets.zero,
-          title: const Text(
-            'كيف أنقل دفتري؟',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-          ),
-          leading: const Icon(
-            Icons.cloud_upload_outlined,
-            color: LocalPalette.teal,
-          ),
-          children: [
-            const ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              leading: CircleAvatar(child: Text('1')),
-              title: Text('إنشاء حساب أو تسجيل الدخول'),
-              subtitle: Text('برقمك، دون إعادة إدخال تفاصيل الدفتر'),
-            ),
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              leading: const CircleAvatar(child: Text('2')),
-              title: const Text('مراجعة الدفتر وتأكيد نقله'),
-              subtitle: Text(
-                '${(d['customers'] as List).length} عميل • ${(d['entries'] as List).length} عملية • ${d['currency']}',
-              ),
-            ),
-            const ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              leading: CircleAvatar(child: Text('3')),
-              title: Text('متابعة العمل من حساب التاجر'),
-              subtitle: Text(
-                'تبقى نسخة الدفتر على هذا الجهاز للقراءة بعد نجاح النقل',
-              ),
-            ),
-          ],
-        ),
-        if (pending)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
-            child: Text(
-              'النقل لم يكتمل. استكمله بالحساب نفسه؛ لا تنشئ دفترًا بديلًا.',
-            ),
-          ),
-        FilledButton.icon(
-          onPressed: busy
-              ? null
-              : () => run(complete ? openAccount : activateCloud),
-          icon: Icon(complete ? Icons.storefront : Icons.cloud_upload_outlined),
-          label: Text(
-            complete
-                ? 'متابعة إلى الحساب'
-                : pending
-                ? 'استكمال نقل الدفتر'
-                : 'تفعيل حساب التاجر',
-          ),
-        ),
-        const SizedBox(height: 24),
         Card(
-          child: ListTile(
-            leading: const Icon(Icons.save_alt),
-            title: const Text('حفظ نسخة احتياطية'),
-            subtitle: const Text('لحماية الدفتر عند فقد الهاتف أو حذف التطبيق'),
-            trailing: const Icon(Icons.chevron_left),
-            onTap: busy ? null : () => run(backup),
+          child: Column(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.payments_outlined),
+                title: const Text('العملة الأساسية'),
+                subtitle: Text(d['currency'].toString()),
+              ),
+              ListTile(
+                leading: const Icon(Icons.people_outline),
+                title: const Text('العملاء'),
+                subtitle: Text('${(d['customers'] as List).length} عميل'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.receipt_long_outlined),
+                title: const Text('الحركات المسجلة'),
+                subtitle: Text('${(d['entries'] as List).length} حركة'),
+              ),
+            ],
           ),
+        ),
+        const SizedBox(height: 20),
+        OutlinedButton.icon(
+          onPressed: busy ? null : openSettings,
+          icon: const Icon(Icons.settings_outlined, size: 19),
+          label: const Text('الإعدادات'),
         ),
         const SizedBox(height: 12),
         const Text(
-          'الحفظ المحلي ليس نسخة سحابية. تفعيل الحساب ونقل البيانات يحتاجان اتصالًا بالإنترنت.',
+          'تُحفظ بيانات هذا الدفتر على جهازك. احفظ نسخة احتياطية من الإعدادات لاستعادتها عند الحاجة.',
         ),
       ],
     );
@@ -359,6 +709,13 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
       await reload();
     } catch (e) {
       if (mounted) {
+        String? serviceMessage;
+        if (e is FunctionException && e.details is Map) {
+          final problem = (e.details as Map)['error'];
+          if (problem is Map && problem['message'] is String) {
+            serviceMessage = problem['message'] as String;
+          }
+        }
         TopNotice.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -366,7 +723,8 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                   ? e.message
                   : e is StateError
                   ? e.message.toString()
-                  : 'تعذر إكمال العملية. بياناتك محفوظة؛ حاول مجددًا.',
+                  : serviceMessage ??
+                        'تعذر إكمال العملية. بياناتك محفوظة؛ حاول مجددًا.',
             ),
           ),
         );
@@ -428,6 +786,21 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
     final value = name.text;
     // Dialog route animations may still reference its controllers.
     if (accepted == true) await run(() => store.create(value, currency));
+  }
+
+  Future<void> addCustomer() async {
+    if (busy || doc == null || doc!['transfer_state'] != 'local') return;
+    final id = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (_) => LocalCustomerScreen(store: store)),
+    );
+    if (!mounted) return;
+    await reload();
+    if (!mounted || id == null) return;
+    setState(() {
+      tab = 1;
+      selected = id;
+    });
   }
 
   Future<void> entry({String? customerId, String initialType = 'debt'}) async {
@@ -509,6 +882,17 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
       if (password == null) return; // cancelled
     }
     await store.restore(text, password: password);
+    if (!mounted) return;
+    setState(() {
+      selected = null;
+      tab = 0;
+    });
+    await reload();
+    if (mounted) {
+      TopNotice.of(context).showSnackBar(
+        const SnackBar(content: Text('تم استعادة النسخة وفتحها كدفتر منفصل.')),
+      );
+    }
   }
 
   Future<String?> _promptRestorePassword() async {
@@ -531,7 +915,7 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
               ),
               if (error != null) ...[
                 const SizedBox(height: 8),
-                Text(error!, style: const TextStyle(color: Colors.red)),
+                Text(error!, style: const TextStyle(color: AppColors.red)),
               ],
             ],
           ),
@@ -557,14 +941,18 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
   }
 
   Future<void> activateCloud() async {
-    final summary = LocalLedgerStore.transferSummary(doc!);
+    final reviewed = jsonDecode(jsonEncode(doc!)) as JsonMap;
+    final summary = LocalLedgerStore.transferSummary(reviewed);
     final categoryCount = summary['category_count'] as int;
     if (!SupabaseConfig.cloudReady) {
       throw StateError(
         'الاتصال بالحساب غير متاح في هذه النسخة. يمكنك مواصلة العمل محليًا.',
       );
     }
-    if (Supabase.instance.client.auth.currentUser == null) {
+    if (!canUseCloudSession(
+      Supabase.instance.client.auth.currentSession,
+      AppDatabase.instance.accountId,
+    )) {
       await Navigator.push(
         context,
         MaterialPageRoute(
@@ -574,7 +962,13 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
       if (!mounted || Supabase.instance.client.auth.currentUser == null) return;
     }
     final client = Supabase.instance.client;
+    requireCloudSession(client, AppDatabase.instance.accountId);
     final user = client.auth.currentUser!;
+    if (reviewed['owner_id'] != null && reviewed['owner_id'] != user.id) {
+      throw StateError(
+        'سجّل الدخول بالحساب المرتبط بهذا الدفتر لاستكمال النقل.',
+      );
+    }
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -629,46 +1023,74 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
         'خدمة نقل الدفتر لم تصبح متاحة بعد. تابع العمل محليًا واحتفظ بنسخة احتياطية.',
       );
     }
-    if (importVersion is! int || importVersion < 3) {
+    if (importVersion is! int || importVersion < 6) {
       throw StateError(
-        'يلزم تحديث خدمة النقل لحفظ التصنيفات. دفتر الحساب ما زال متاحًا محليًا.',
+        'يلزم تحديث خدمة النقل لحفظ بيانات العملاء وتواريخ الحركات. دفتر الحساب ما زال متاحًا محليًا.',
       );
     }
-    final snapshot = await store.reserveTransfer(user.id);
+    final capabilities = await client.functions
+        .invoke(
+          'local-notebook-import',
+          body: {
+            'action': 'capabilities',
+            'notebook': {...reviewed, 'owner_id': user.id},
+          },
+        )
+        .timeout(const Duration(seconds: 15));
+    if (capabilities.data is! Map ||
+        capabilities.data['version'] is! int ||
+        capabilities.data['version'] < 6) {
+      throw StateError(
+        'خدمة نقل بيانات العملاء غير جاهزة. يمكنك متابعة العمل محليًا.',
+      );
+    }
     final backupDirectory = await getApplicationSupportDirectory();
     final transferBackupDirectory = Directory(
       '${backupDirectory.path}/transfer-backups',
     );
-    await transferBackupDirectory.create(recursive: true);
     final backupPassword = await DbEncryptionKeyStore().passphraseFor(
-      'local_transfer_backup_${snapshot['id']}',
+      'local_transfer_backup_${reviewed['id']}',
     );
-    final backupFile = File(
-      '${transferBackupDirectory.path}/${snapshot['id']}.json.enc',
+    final backupFile = await ensureLocalTransferBackup(
+      snapshot: reviewed,
+      directory: transferBackupDirectory,
+      password: backupPassword,
     );
-    if (!await backupFile.exists()) {
-      await backupFile.writeAsString(
-        await store.backup(password: backupPassword),
-        flush: true,
-      );
+    requireCloudSession(client, user.id);
+    if (AppDatabase.instance.accountId != user.id) {
+      throw StateError('تغيّر الحساب قبل النقل.');
     }
+    final snapshot = await store.reserveTransfer(
+      user.id,
+      expectedSnapshot: reviewed,
+    );
     await store.markTransferCheckpoint(
       user.id,
       'backup_created',
       backupPath: backupFile.path,
+      notebookId: snapshot['id'] as String,
     );
-    final result = await client
-        .rpc('import_local_notebook', params: {'p_notebook': snapshot})
+    final response = await client.functions
+        .invoke('local-notebook-import', body: {'notebook': snapshot})
         .timeout(const Duration(seconds: 60));
-    await store.markTransferCheckpoint(user.id, 'uploaded');
+    final result = response.data;
     if (client.auth.currentUser?.id != user.id) {
       throw StateError(
         'تغيّر الحساب. أعد تسجيل الدخول بالحساب المرتبط لاستكمال النقل.',
       );
     }
+    await store.markTransferCheckpoint(
+      user.id,
+      'uploaded',
+      notebookId: snapshot['id'] as String,
+    );
     if (result is! Map ||
         result['entry_count'] != (snapshot['entries'] as List).length ||
         result['customer_count'] != (snapshot['customers'] as List).length ||
+        result['phone_count'] !=
+            (snapshot['customers'] as List)
+                .where((c) => (c['phone'] as String? ?? '').trim().isNotEmpty)
+                .length ||
         result['business_id'] is! String ||
         (categoryCount > 0 && result['category_count'] != categoryCount)) {
       throw StateError(
@@ -683,6 +1105,7 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
         .timeout(const Duration(seconds: 30));
     if (verification is! Map ||
         verification['verified'] != true ||
+        verification['business_id'] != result['business_id'] ||
         verification['customer_count'] != summary['customer_count'] ||
         verification['entry_count'] != summary['entry_count'] ||
         verification['category_count'] != summary['category_count'] ||
@@ -692,16 +1115,37 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
         'بيانات الخادم لا تطابق الدفتر المحلي. لم يُعلن نجاح النقل ويمكن استئنافه بأمان.',
       );
     }
-    await store.markTransferCheckpoint(user.id, 'verified');
-    await store.completeTransfer(user.id, result['business_id']);
+    requireCloudSession(client, user.id);
+    if (AppDatabase.instance.accountId != user.id) {
+      throw StateError('تغيّر الحساب أثناء التحقق.');
+    }
+    await store.markTransferCheckpoint(
+      user.id,
+      'verified',
+      notebookId: snapshot['id'] as String,
+    );
+    await store.completeTransfer(
+      user.id,
+      result['business_id'],
+      notebookId: snapshot['id'] as String,
+    );
     await reload();
+    if (!mounted) return;
+    final container = ProviderScope.containerOf(context, listen: false);
+    await container
+        .read(authControllerProvider.notifier)
+        .activateImportedBusiness(result['business_id'] as String);
     if (mounted) {
       setState(() => tab = 3);
       TopNotice.of(context).showSnackBar(
         const SnackBar(
-          content: Text('تم نقل الدفتر. افتح الحساب لمواصلة العمل والمزامنة.'),
+          content: Text(
+            'تم نقل الدفتر وبيانات العملاء. حسابك جاهز لمواصلة العمل.',
+          ),
         ),
       );
+      await Navigator.pushNamed(context, AppRoutes.merchantHome);
+      if (mounted) await reload();
     }
   }
 
@@ -710,6 +1154,9 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
     final d = doc;
     final customers = d == null ? <dynamic>[] : d['customers'] as List;
     final entries = d == null ? <dynamic>[] : d['entries'] as List;
+    final homeEntries = LocalLedgerStore.chronological(
+      entries,
+    ).reversed.toList();
     final frozen = d != null && d['transfer_state'] != 'local';
     final customer = selected == null
         ? null
@@ -717,56 +1164,117 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
     return Scaffold(
       backgroundColor: LocalPalette.canvas,
       appBar: AppBar(
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        toolbarHeight: 64,
+        backgroundColor: AppColors.backgroundLight,
+        foregroundColor: AppColors.textPrimary,
+        toolbarHeight: 56,
+        shape: const Border(bottom: BorderSide(color: AppColors.borderLight)),
         centerTitle: false,
-        titleSpacing: 16,
+        titleSpacing: 12,
         automaticallyImplyLeading: false,
         elevation: 0,
         scrolledUnderElevation: 0,
-        systemOverlayStyle: SystemUiOverlayStyle.light.copyWith(
-          statusBarColor: Colors.transparent,
+        systemOverlayStyle: SystemUiOverlayStyle.dark.copyWith(
+          statusBarColor: AppColors.transparent,
         ),
         titleTextStyle: const TextStyle(
-          fontFamily: 'Tajawal',
-          fontSize: 18,
+          fontFamily: AppTypography.fontFamily,
+          fontSize: 19,
           fontWeight: FontWeight.w700,
-          color: Colors.white,
+          color: AppColors.textPrimary,
         ),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        title: Row(
           children: [
-            Text(
-              customer?['name'] ?? d?['name'] ?? 'مُثبَت | دفتر حساب',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
+            if (customer == null) ...[
+              WorkspaceSwitcherButton(
+                currentKind: 'local',
+                name: d?['name'] as String?,
+                notebookId: d?['id'] as String?,
+                store: store,
+                enabled: !busy,
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              const SizedBox(width: 10),
+            ],
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    customer?['name'] ?? d?['name'] ?? 'مُثبَت | دفتر حساب',
+                    style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 19,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (customer == null && d != null && tab == 0)
+                    Tooltip(
+                      message: frozen
+                          ? 'نسخة محلية • راجع حالة النقل في الحساب'
+                          : 'محفوظ على جهازك • يعمل دون إنترنت',
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            frozen
+                                ? AppIcons.pendingUpload
+                                : AppIcons.shieldCheck,
+                            size: 12,
+                            color: AppColors.primary,
+                          ),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              frozen ? 'نسخة محلية' : 'دفتر محلي • دون إنترنت',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (customer == null && (d == null || tab != 0))
+                    Text(
+                      d == null
+                          ? 'حساباتك ببساطة'
+                          : [
+                              'دفتر حساب شخصي',
+                              'العملاء',
+                              'التقارير',
+                              'إدارة الحساب',
+                            ][tab],
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  if (customer != null && customer['phone'] != null)
+                    Text(
+                      customer['phone'].toString(),
+                      textDirection: TextDirection.ltr,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                ],
+              ),
             ),
-            if (customer == null)
-              Text(
-                d == null
-                    ? 'حساباتك ببساطة'
-                    : [
-                        'دفتر حساب شخصي',
-                        'العملاء',
-                        'التقارير',
-                        'إدارة الحساب',
-                      ][tab],
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textWhiteSecondary,
-                ),
-              ),
           ],
         ),
         leading: customer == null && tab == 0
             ? null
             : IconButton(
+                iconSize: 20,
                 onPressed: () => setState(() {
                   if (selected != null) {
                     selected = null;
@@ -774,66 +1282,44 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                     tab = 0;
                   }
                 }),
-                icon: const Icon(Icons.arrow_back),
+                tooltip: 'رجوع',
+                icon: const Icon(AppIcons.chevronStart),
               ),
         actions: [
-          if (d != null) ...[
+          IconButton(
+            tooltip: 'الإعدادات',
+            iconSize: 19,
+            onPressed: busy ? null : openSettings,
+            icon: const Icon(AppIcons.settings),
+            style: _headerActionStyle,
+          ),
+          if (d != null)
+            IconButton(
+              iconSize: 19,
+              tooltip: 'الحساب',
+              style: _headerActionStyle,
+              onPressed: busy
+                  ? null
+                  : () => setState(() {
+                      selected = null;
+                      tab = 3;
+                    }),
+              icon: const Icon(AppIcons.profile),
+            ),
+          if (d != null)
             IconButton(
               tooltip: 'التقارير',
-              style: IconButton.styleFrom(
-                backgroundColor: Colors.white.withValues(alpha: .10),
-              ),
-              onPressed: () => setState(() {
-                selected = null;
-                tab = 2;
-              }),
-              icon: const Icon(Icons.bar_chart),
+              icon: const Icon(AppIcons.reports),
+              iconSize: 19,
+              style: _headerActionStyle,
+              onPressed: busy
+                  ? null
+                  : () => setState(() {
+                      selected = null;
+                      tab = 2;
+                    }),
             ),
-            IconButton(
-              tooltip: 'الحساب',
-              style: IconButton.styleFrom(
-                backgroundColor: Colors.white.withValues(alpha: .10),
-              ),
-              onPressed: () => setState(() {
-                selected = null;
-                tab = 3;
-              }),
-              icon: const Icon(Icons.person_outline),
-            ),
-          ],
-          if (d != null)
-            PopupMenuButton<String>(
-              enabled: !busy,
-              onSelected: (v) => run(() async {
-                if (v == 'backup') {
-                  await backup();
-                } else if (v == 'cloud') {
-                  await activateCloud();
-                } else if (v == 'account') {
-                  await openAccount();
-                } else if (v == 'lock' && mounted) {
-                  await Navigator.pushNamed(context, AppRoutes.appLockSettings);
-                }
-              }),
-              itemBuilder: (_) => const [
-                PopupMenuItem(
-                  value: 'backup',
-                  child: Text('نسخة احتياطية قابلة للاستعادة'),
-                ),
-                PopupMenuItem(
-                  value: 'cloud',
-                  child: Text('تفعيل الحساب ونقل الدفتر'),
-                ),
-                PopupMenuItem(
-                  value: 'account',
-                  child: Text('فتح حسابي السحابي'),
-                ),
-                PopupMenuItem(
-                  value: 'lock',
-                  child: Text('قفل التطبيق والبصمة'),
-                ),
-              ],
-            ),
+          const SizedBox(width: 8),
         ],
       ),
       body: loading
@@ -895,7 +1381,7 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                           'سجّل العملاء والديون والدفعات دون حساب ودون إنترنت.',
                           style: TextStyle(
                             color: LocalPalette.secondaryText,
-                            fontSize: 14,
+                            fontSize: 15,
                             height: 1.6,
                           ),
                           textAlign: TextAlign.center,
@@ -921,16 +1407,17 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
                                 ),
                           child: const Text('لدي حساب'),
                         ),
-                        TextButton(
-                          onPressed: busy ? null : () => run(restore),
-                          child: const Text('استعادة نسخة احتياطية'),
+                        OutlinedButton.icon(
+                          onPressed: busy ? null : openSettings,
+                          icon: const Icon(Icons.settings_outlined, size: 18),
+                          label: const Text('الإعدادات'),
                         ),
                         const SizedBox(height: 16),
                         const Text(
-                          'بياناتك محفوظة على هذا الجهاز. صدّر نسخة احتياطية لحمايتها عند فقد الهاتف أو حذف التطبيق.',
+                          'عند حذف التطبيق، اختر «الاحتفاظ ببيانات التطبيق» إذا ظهر الخيار. الاحتفاظ يعتمد على نظام الهاتف، وإعادة التثبيت تحتاج نسخة بالتوقيع نفسه. صدّر نسخة احتياطية خارج التطبيق لضمان إمكانية استعادة دفترك إذا حُذفت البيانات أو مفاتيح التشفير.',
                           style: TextStyle(
                             color: LocalPalette.secondaryText,
-                            fontSize: 12,
+                            fontSize: 13,
                             height: 1.6,
                           ),
                           textAlign: TextAlign.center,
@@ -944,174 +1431,171 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
           : customer == null && tab == 3
           ? accountPanel(d)
           : customer == null && (tab == 0 || tab == 2)
-          ? ListView(
+          ? ListView.builder(
               padding: const EdgeInsets.only(bottom: 100),
-              children: [
-                if (busy) const LinearProgressIndicator(),
-                if (tab == 0)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.offline_pin_outlined,
-                          color: LocalPalette.teal,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            frozen
-                                ? 'نسخة محلية • راجع حالة النقل في الحساب'
-                                : 'محفوظ على جهازك • يعمل دون إنترنت',
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                LocalAnalytics(document: d, summaryOnly: tab == 0),
-                if (tab == 0) ...[
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: _quickAction(
-                            Icons.people_outline,
-                            'العملاء',
-                            () => setState(() => tab = 1),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: _quickAction(
-                            Icons.receipt_long_outlined,
-                            'تسجيل دين',
-                            frozen || busy ? null : () => entry(),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: _quickAction(
-                            Icons.payments_outlined,
-                            'تسجيل دفعة',
-                            frozen || busy
-                                ? null
-                                : () => entry(initialType: 'payment'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Card(
-                      child: ListTile(
-                        leading: const Icon(
-                          Icons.cloud_upload_outlined,
-                          color: LocalPalette.teal,
-                        ),
-                        title: Text(
-                          frozen
-                              ? 'متابعة حالة نقل الدفتر'
-                              : 'دفترك جاهز لحساب التاجر',
-                        ),
-                        subtitle: const Text(
-                          'نفس العملاء والعمليات، دون البدء من جديد',
-                        ),
-                        trailing: const Icon(Icons.chevron_left),
-                        onTap: () => setState(() => tab = 3),
-                      ),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
-                    child: Text(
-                      'آخر العمليات',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  ),
-                  if (entries.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Text('سجّل أول دين أو دفعة من الاختصارات أعلاه.'),
-                    ),
-                  ...LocalLedgerStore.chronological(
-                    entries,
-                  ).reversed.take(5).map((e) {
-                    final owner = customers
-                        .where((c) => c['id'] == e['customer_id'])
-                        .firstOrNull;
-                    return Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                      child: Material(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(12),
-                          onTap: () =>
-                              setState(() => selected = e['customer_id']),
-                          child: Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  e['direction'] == 'debit'
-                                      ? Icons.receipt_long_outlined
-                                      : Icons.payments_outlined,
-                                  color: LocalPalette.teal,
-                                  size: 22,
+              itemCount: 1 + (tab == 0 ? homeEntries.length : 0),
+              itemBuilder: (context, index) {
+                if (index == 0) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (busy) const LinearProgressIndicator(),
+                      LocalAnalytics(document: d, summaryOnly: tab == 0),
+                      if (tab == 0) ...[
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: _quickAction(
+                                  AppIcons.customers,
+                                  'العملاء',
+                                  () => setState(() => tab = 1),
                                 ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        '${LocalLedgerStore.labels[e['type']]} · ${owner?['name'] ?? 'عميل'}',
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                      Text(
-                                        LocalLedgerStore.localDate(
-                                          e['occurred_at'],
-                                        ),
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          color: LocalPalette.secondaryText,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _quickAction(
+                                  AppIcons.receipt,
+                                  'تسجيل دين',
+                                  frozen || busy ? null : () => entry(),
+                                  tint: AppColors.debt,
                                 ),
-                                const SizedBox(width: 8),
-                                Flexible(
-                                  child: Text(
-                                    '${LocalLedgerStore.money(e['minor'])} ${d['currency']}',
-                                    textAlign: TextAlign.end,
-                                    style: TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w700,
-                                      color: e['direction'] == 'debit'
-                                          ? LocalPalette.debt
-                                          : LocalPalette.payment,
-                                    ),
-                                  ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _quickAction(
+                                  AppIcons.cash,
+                                  'تسجيل دفعة',
+                                  frozen || busy
+                                      ? null
+                                      : () => entry(initialType: 'payment'),
+                                  tint: AppColors.payment,
                                 ),
-                              ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Card(
+                            child: ListTile(
+                              leading: const Icon(
+                                AppIcons.pendingUpload,
+                                color: LocalPalette.teal,
+                              ),
+                              title: Text(
+                                frozen
+                                    ? 'متابعة حالة نقل الدفتر'
+                                    : 'دفترك جاهز لحساب التاجر',
+                              ),
+                              subtitle: const Text(
+                                'نفس العملاء والعمليات، دون البدء من جديد',
+                              ),
+                              trailing: const Icon(AppIcons.chevronEnd),
+                              onTap: () => setState(() => tab = 3),
                             ),
                           ),
                         ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+                          child: Text(
+                            'جميع العمليات (${homeEntries.length})',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                        if (entries.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Text(
+                              'سجّل أول دين أو دفعة من الاختصارات أعلاه.',
+                            ),
+                          ),
+                      ],
+                    ],
+                  );
+                }
+                final e = homeEntries[index - 1];
+                final owner = customers
+                    .where((c) => c['id'] == e['customer_id'])
+                    .firstOrNull;
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: Material(
+                    color: AppColors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => setState(() => selected = e['customer_id']),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: AppColors.transactionColor(
+                                  e['type'].toString(),
+                                ).withValues(alpha: .10),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Icon(
+                                e['type'] == 'discount'
+                                    ? AppIcons.discount
+                                    : e['direction'] == 'debit'
+                                    ? AppIcons.debt
+                                    : AppIcons.receivePayment,
+                                color: AppColors.transactionColor(
+                                  e['type'].toString(),
+                                ),
+                                size: 20,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '${LocalLedgerStore.labels[e['type']]} · ${owner?['name'] ?? 'عميل'}',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  Text(
+                                    '${LocalLedgerStore.labels[e['type']]} ? ${LocalLedgerStore.localDate(e['occurred_at'])}',
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      color: LocalPalette.secondaryText,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                '${LocalLedgerStore.money(e['minor'])} ${d['currency']}',
+                                textAlign: TextAlign.end,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.transactionColor(
+                                    e['type'].toString(),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    );
-                  }),
-                ],
-              ],
+                    ),
+                  ),
+                );
+              },
             )
           : LocalDirectory(
               key: ValueKey(selected ?? 'directory'),
@@ -1120,20 +1604,49 @@ class _LocalLedgerScreenState extends State<LocalLedgerScreen> {
               busy: busy,
               onOpen: (id) => setState(() => selected = id),
               onReverse: reverse,
-              onPdf: () => run(() async {
-                await shareBytes(
-                  await localLedgerPdf(d, JsonMap.from(customer!)),
-                  'statement-${customer['id']}.pdf',
-                  'application/pdf',
-                );
-              }),
+              onPdf: () async {
+                if (busy) return;
+                setState(() => busy = true);
+                try {
+                  final bytes = await localLedgerPdf(
+                    d,
+                    JsonMap.from(customer!),
+                  );
+                  if (!context.mounted) return;
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => LocalPdfPreview(
+                        bytes: bytes,
+                        filename: 'statement-${customer['id']}',
+                      ),
+                    ),
+                  );
+                } catch (error, stack) {
+                  debugPrint('PDF generation failed: $error\n$stack');
+                  if (context.mounted) {
+                    TopNotice.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('تعذر إنشاء تقرير PDF. حاول مجددًا.'),
+                      ),
+                    );
+                  }
+                } finally {
+                  if (mounted) setState(() => busy = false);
+                }
+              },
             ),
       floatingActionButton: d == null || frozen || (customer == null && tab > 1)
           ? null
           : FloatingActionButton.extended(
-              onPressed: busy ? null : () => entry(customerId: selected),
+              onPressed: busy
+                  ? null
+                  : customer == null && tab == 1
+                  ? addCustomer
+                  : () => entry(customerId: selected),
               icon: const Icon(Icons.add),
-              label: const Text('دين / دفعة'),
+              label: Text(
+                customer == null && tab == 1 ? 'إضافة عميل' : 'دين / دفعة',
+              ),
             ),
     );
   }
@@ -1232,7 +1745,12 @@ class _LocalAccountScreenState extends ConsumerState<LocalAccountScreen> {
     backgroundColor: LocalPalette.canvas,
     appBar: AppBar(
       backgroundColor: AppColors.primary,
-      foregroundColor: Colors.white,
+      foregroundColor: AppColors.white,
+      systemOverlayStyle: SystemUiOverlayStyle.light,
+      titleTextStyle: Theme.of(context).textTheme.titleLarge?.copyWith(
+        color: AppColors.white,
+        fontWeight: FontWeight.w700,
+      ),
       title: Text(
         otp
             ? 'تأكيد الرقم'
@@ -1266,7 +1784,7 @@ class _LocalAccountScreenState extends ConsumerState<LocalAccountScreen> {
                       ? 'خطوة واحدة لتأكيد هويتك'
                       : 'دفترك معك في الخطوة التالية',
                   style: const TextStyle(
-                    color: Colors.white,
+                    color: AppColors.white,
                     fontSize: 22,
                     fontWeight: FontWeight.w800,
                   ),
@@ -1274,7 +1792,7 @@ class _LocalAccountScreenState extends ConsumerState<LocalAccountScreen> {
                 const SizedBox(height: 12),
                 Text(
                   'دفترك «${widget.businessName}» جاهزة. لا تحتاج إلى إدخال بياناتها من جديد.',
-                  style: const TextStyle(color: Colors.white),
+                  style: const TextStyle(color: AppColors.white),
                 ),
               ],
             ),

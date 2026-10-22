@@ -15,7 +15,7 @@ select set_config('test.notebook',jsonb_build_object(
   ))::text,true);
 select set_config('test.notebook',jsonb_set(current_setting('test.notebook')::jsonb,'{entries,0,category}','"مواد غذائية"'::jsonb)::text,true);
 select set_config('test.import_result',public.import_local_notebook(current_setting('test.notebook')::jsonb)::text,true);
-select is(public.local_notebook_import_version(),3,'Resumable verified import capability is version 3');
+select is(public.local_notebook_import_version(),6,'Resumable verified import capability is version 6');
 select is((current_setting('test.import_result')::jsonb->>'category_count')::int,1,'Acknowledges preserved category count');
 select is((select label from public.local_import_entry_categories c join public.ledger_entries e on e.id=c.entry_id where e.business_id=(current_setting('test.import_result')::jsonb->>'business_id')::uuid),'مواد غذائية','Preserves the original Arabic category');
 select is((current_setting('test.import_result')::jsonb->>'entry_count')::int,4,'Imports all financial entry types');

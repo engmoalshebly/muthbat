@@ -26,6 +26,13 @@ void main() {
       await customerCache.write(first, 'home', {'balance': 123});
       expect((await customerCache.read(first, 'home'))?['balance'], 123);
       final db = await store.database;
+      // Model another engine opening the same file with sqflite's default
+      // shared-instance option, then closing it when its task finishes.
+      final worker = await databaseFactoryFfi.openDatabase(db.path);
+      expect(identical(worker, db), isFalse);
+      await worker.close();
+      expect(db.isOpen, isTrue);
+      expect(await db.query('local_profiles'), isEmpty);
       await db.insert('offline_mutations_queue', {
         'client_request_id': 'cccccccc-cccc-cccc-cccc-cccccccccccc',
         'command_type': 'create_business',
@@ -33,6 +40,12 @@ void main() {
         'status': 'pending',
         'created_at': DateTime.now().toIso8601String(),
       });
+      // A background Flutter engine can close the native sqflite connection
+      // while this isolate still holds the old Dart Database handle.
+      await db.close();
+      final reopened = await store.database;
+      expect(reopened.isOpen, isTrue);
+      expect(await store.getPendingMutationsCount(), 1);
       await store.lockAccount();
       await expectLater(store.database, throwsStateError);
       await store.bindAccount(second);
@@ -75,6 +88,42 @@ void main() {
       await store.forgetRememberedOwner();
       await store.lockAccount();
       expect(await store.restoreRememberedCustomer(), isNull);
+    },
+  );
+
+  test(
+    'concurrent account transitions leave one isolated account active',
+    () async {
+      sqfliteFfiInit();
+      AppDatabase.debugDatabaseFactory = databaseFactoryFfi;
+      final folder = await Directory.systemTemp.createTemp(
+        'muthbat-account-transition-test-',
+      );
+      await databaseFactoryFfi.setDatabasesPath(folder.path);
+      final store = AppDatabase.instance;
+      const first = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+      const second = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+
+      await Future.wait([store.bindAccount(first), store.bindAccount(second)]);
+      expect(store.accountId, second);
+      await store.saveProfile({
+        'id': second,
+        'display_name': 'Second account',
+        'user_type': 'customer',
+        'phone': '967700000002',
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+
+      await Future.wait([store.lockAccount(), store.bindAccount(first)]);
+      expect(store.accountId, first);
+      expect(await store.getProfile(second), isNull);
+      await store.lockAccount();
+      await store.bindAccount(second);
+      expect(
+        (await store.getProfile(second))?['display_name'],
+        'Second account',
+      );
+      await store.lockAccount();
     },
   );
 }

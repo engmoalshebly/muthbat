@@ -1,4 +1,4 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.112.3";
 
 function requireEnv(name: string): string {
   const value = Deno.env.get(name);

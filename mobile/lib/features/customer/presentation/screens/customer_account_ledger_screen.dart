@@ -1,3 +1,6 @@
+import '../../../../app/theme/app_colors.dart';
+import '../../../../app/theme/app_icons.dart';
+import '../../../../app/router/app_routes.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../auth/presentation/controllers/auth_controller.dart';
@@ -7,16 +10,19 @@ import '../../data/customer_ledger_pdf.dart';
 import '../../../../shared/widgets/top_notice.dart';
 import '../../data/customer_repository.dart';
 import '../../data/customer_cache.dart';
+import '../../data/customer_local_store.dart';
 import 'customer_entry_details_screen.dart';
 import '../../data/models/customer_summary_model.dart';
 
 class CustomerAccountLedgerScreen extends ConsumerStatefulWidget {
   final CustomerBusinessSummary summary;
   final CustomerRepository? repository;
+  final String? focusEntryId;
   const CustomerAccountLedgerScreen({
     super.key,
     required this.summary,
     this.repository,
+    this.focusEntryId,
   });
   @override
   ConsumerState<CustomerAccountLedgerScreen> createState() =>
@@ -35,15 +41,30 @@ class _CustomerAccountLedgerScreenState
   bool _exporting = false;
   String _filter = 'all';
   String _query = '';
+  late CustomerBusinessSummary _displaySummary = widget.summary;
+  bool _refreshing = false;
 
   Future<void> _exportPdf() async {
-    if (_exporting || _busy || _rows.isEmpty || !_current) return;
+    if (_exporting || _busy || !_current) return;
     setState(() => _exporting = true);
     try {
+      final snapshot =
+          await _repository.local.ledger(
+            _owner!,
+            widget.summary.businessCustomerId,
+            widget.summary.currencyCode,
+          ) ??
+          await _repository.fetchCompleteLedger(
+            businessCustomerId: widget.summary.businessCustomerId,
+            currency: widget.summary.currencyCode,
+          );
+      if (!_current) return;
+      final summary = snapshot.summaries.single;
       final bytes = await customerLedgerPdf(
-        summary: widget.summary,
-        entries: List<Map<String, dynamic>>.from(_rows),
-        updatedAt: _updated ?? 'غير معروف',
+        summary: summary,
+        entries: snapshot.entries,
+        updatedAt: snapshot.updatedAt,
+        isComplete: true,
       );
       if (!mounted || !_current) return;
       final box = context.findRenderObject() as RenderBox?;
@@ -65,7 +86,11 @@ class _CustomerAccountLedgerScreenState
     } catch (e) {
       if (mounted) {
         TopNotice.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذر تصدير الكشف. لم تتغير بياناتك.')),
+          const SnackBar(
+            content: Text(
+              'تعذر تحميل الكشف الكامل. تحقق من الاتصال وأعد التصدير.',
+            ),
+          ),
         );
       }
     } finally {
@@ -81,7 +106,41 @@ class _CustomerAccountLedgerScreenState
   @override
   void initState() {
     super.initState();
+    CustomerLocalStore.ledgerChanges.addListener(_restoreSyncedLedger);
     _load(reset: true);
+  }
+
+  @override
+  void dispose() {
+    CustomerLocalStore.ledgerChanges.removeListener(_restoreSyncedLedger);
+    super.dispose();
+  }
+
+  Future<void> _restoreSyncedLedger() async {
+    if (!_current || _busy) return;
+    try {
+      final saved = await _repository.local.ledger(
+        _owner!,
+        widget.summary.businessCustomerId,
+        widget.summary.currencyCode,
+      );
+      if (!_current || _busy || saved == null) return;
+      if (_updated != null &&
+          DateTime.parse(saved.updatedAt).isBefore(DateTime.parse(_updated!))) {
+        return;
+      }
+      setState(() {
+        _rows
+          ..clear()
+          ..addAll(saved.entries);
+        _displaySummary = saved.summaries.single;
+        _updated = saved.updatedAt;
+        _more = false;
+        _cached = true;
+      });
+    } catch (_) {
+      /* Keep the visible, complete projection. */
+    }
   }
 
   Future<void> _load({bool reset = false}) async {
@@ -90,6 +149,31 @@ class _CustomerAccountLedgerScreenState
       _busy = true;
       _error = null;
     });
+    // A complete downloaded ledger supports all history/search/export offline.
+    try {
+      final local = await _repository.local.ledger(
+        _owner!,
+        widget.summary.businessCustomerId,
+        widget.summary.currencyCode,
+      );
+      if (!_current) return;
+      if (local != null) {
+        setState(() {
+          _rows
+            ..clear()
+            ..addAll(local.entries);
+          _updated = local.updatedAt;
+          _displaySummary = local.summaries.single;
+          _cached = true;
+          _more = false;
+          _busy = false;
+        });
+        if (reset) _refreshCompleteLedger();
+        return;
+      }
+    } catch (_) {
+      /* Retain legacy cache for the first upgrade. */
+    }
     if (reset && _rows.isEmpty) {
       try {
         final saved = await _cache.read(_owner!, _key);
@@ -144,6 +228,74 @@ class _CustomerAccountLedgerScreenState
     }
   }
 
+  Future<void> _refreshCompleteLedger() async {
+    if (_refreshing) return;
+    _refreshing = true;
+    try {
+      final snapshot = await _repository.fetchCompleteLedger(
+        businessCustomerId: widget.summary.businessCustomerId,
+        currency: widget.summary.currencyCode,
+      );
+      if (!_current) return;
+      await _repository.local.saveLedger(
+        _owner!,
+        snapshot,
+        relationship: widget.summary.businessCustomerId,
+        currency: widget.summary.currencyCode,
+      );
+      if (!_current) return;
+      setState(() {
+        _rows
+          ..clear()
+          ..addAll(snapshot.entries);
+        _updated = snapshot.updatedAt;
+        _displaySummary = snapshot.summaries.single;
+        _cached = false;
+        _more = false;
+      });
+    } catch (_) {
+      /* The last complete ledger remains available offline. */
+    } finally {
+      _refreshing = false;
+    }
+  }
+
+  Widget _balanceAmount({
+    required String label,
+    required double amount,
+    required Color color,
+    required NumberFormat formatter,
+  }) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+    decoration: BoxDecoration(
+      color: AppColors.white.withValues(alpha: .10),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12, color: AppColors.white70),
+        ),
+        const SizedBox(height: 5),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: AlignmentDirectional.centerStart,
+          child: Text(
+            '\u2066${formatter.format(amount)}\u2069 ${widget.summary.currencyCode}',
+            maxLines: 1,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     if (widget.repository == null) {
@@ -162,10 +314,45 @@ class _CustomerAccountLedgerScreenState
     };
     final formatter = NumberFormat('#,##0.####');
     return Scaffold(
+      backgroundColor: AppColors.backgroundLight,
       appBar: AppBar(
-        title: Text(
-          '${widget.summary.businessName} • ${widget.summary.currencyCode}',
+        backgroundColor: AppColors.backgroundLight,
+        elevation: 0,
+        toolbarHeight: 60,
+        titleSpacing: 0,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.summary.businessName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              'كشف الحساب • ${widget.summary.currencyCode}',
+              style: const TextStyle(
+                fontSize: 11,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
         ),
+        actions: [
+          IconButton(
+            tooltip: _exporting ? 'جارٍ تجهيز الكشف' : 'تصدير الكشف الكامل PDF',
+            onPressed: _busy || _exporting ? null : _exportPdf,
+            icon: _exporting
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.picture_as_pdf_outlined, size: 22),
+          ),
+          const SizedBox(width: 6),
+        ],
       ),
       body: RefreshIndicator(
         onRefresh: () => _load(reset: true),
@@ -173,88 +360,122 @@ class _CustomerAccountLedgerScreenState
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16),
           children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.summary.businessName,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                gradient: AppColors.cardGradient,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'رصيد حسابك',
+                    style: TextStyle(fontSize: 12, color: AppColors.white70),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _balanceAmount(
+                          label: 'عليك',
+                          amount: _displaySummary.currentBalance > 0
+                              ? _displaySummary.currentBalance
+                              : 0,
+                          color: const Color(0xFFFFD7D4),
+                          formatter: formatter,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      widget.summary.currentBalance > 0
-                          ? 'المتبقي عليك'
-                          : widget.summary.currentBalance < 0
-                          ? 'رصيد لك لدى البقالة'
-                          : 'الحساب مسدد',
-                    ),
-                    Text(
-                      '${formatter.format(widget.summary.currentBalance.abs())} ${widget.summary.currencyCode}',
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _balanceAmount(
+                          label: 'لك',
+                          amount: _displaySummary.currentBalance < 0
+                              ? _displaySummary.currentBalance.abs()
+                              : 0,
+                          color: const Color(0xFFD3F5E5),
+                          formatter: formatter,
+                        ),
                       ),
-                    ),
-                    const Text(
-                      'رصيد آخر ملخص محفوظ؛ يتحدث عند تحديث قائمة البقالات.',
-                      style: TextStyle(fontSize: 11),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'صافي الرصيد حسب آخر ملخص محفوظ',
+                    style: TextStyle(fontSize: 10, color: AppColors.white70),
+                  ),
+                ],
               ),
             ),
-            OutlinedButton.icon(
-              onPressed: _busy || _exporting || _rows.isEmpty
-                  ? null
-                  : _exportPdf,
-              icon: const Icon(Icons.picture_as_pdf_outlined),
-              label: Text(
-                _exporting ? 'جارٍ إعداد الكشف…' : 'تصدير الحركات المحمّلة PDF',
+            const SizedBox(height: 16),
+            const Text(
+              'حركات الحساب',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
               ),
             ),
-            const Text(
-              'حركات حسابك لدى البقالة',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-            ),
-            const Text(
-              'هذه قيود مالية وليست قائمة منتجات. تحميل المزيد يعرض الحركات الأقدم.',
-            ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             TextField(
-              decoration: const InputDecoration(
+              style: const TextStyle(fontSize: 13),
+              decoration: InputDecoration(
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
                 hintText: 'ابحث في وصف الحركات المحمّلة',
-                prefixIcon: Icon(Icons.search),
+                prefixIcon: const Icon(Icons.search, size: 20),
+                filled: true,
+                fillColor: AppColors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppColors.borderLight),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: AppColors.borderLight),
+                ),
               ),
               onChanged: (value) =>
                   setState(() => _query = value.trim().toLowerCase()),
             ),
             const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              children: [
-                for (final option in const {
-                  'all': 'الكل',
-                  'debt': 'الديون',
-                  'payment': 'الدفعات',
-                  'discount': 'الخصومات',
-                }.entries)
-                  ChoiceChip(
-                    label: Text(option.value),
-                    selected: _filter == option.key,
-                    onSelected: (_) => setState(() => _filter = option.key),
-                  ),
-              ],
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                spacing: 6,
+                children: [
+                  for (final option in const {
+                    'all': 'الكل',
+                    'debt': 'الديون',
+                    'payment': 'الدفعات',
+                    'discount': 'الخصومات',
+                  }.entries)
+                    ChoiceChip(
+                      label: Text(
+                        option.value,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      showCheckmark: false,
+                      selectedColor: AppColors.primaryContainer,
+                      side: BorderSide.none,
+                      visualDensity: VisualDensity.compact,
+                      selected: _filter == option.key,
+                      onSelected: (_) => setState(() => _filter = option.key),
+                    ),
+                ],
+              ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             if (_updated != null)
               Text(
-                '${_cached ? 'نسخة محفوظة — قد تكون قديمة' : 'آخر تحديث'}: ${DateFormat('yyyy/MM/dd HH:mm').format(DateTime.parse(_updated!).toLocal())}',
+                '${_cached ? 'نسخة الجهاز • آخر مزامنة' : 'آخر تحديث'}: ${DateFormat('yyyy/MM/dd HH:mm').format(DateTime.parse(_updated!).toLocal())}',
+                style: const TextStyle(
+                  fontSize: 10,
+                  color: AppColors.textMuted,
+                ),
               ),
             if (_error != null) ...[
               Text(
@@ -266,6 +487,26 @@ class _CustomerAccountLedgerScreenState
                 child: const Text('تحديث من الخادم'),
               ),
             ],
+            if (widget.focusEntryId != null && _rows.isNotEmpty)
+              Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: .08),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.notifications_active_outlined, size: 20),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'تم فتح الحساب المرتبط بالإشعار. الحركة المعنية مميزة أدناه إن كانت ضمن القائمة.',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             if (!_busy && _rows.isEmpty && _error == null)
               const Padding(
                 padding: EdgeInsets.all(32),
@@ -282,17 +523,20 @@ class _CustomerAccountLedgerScreenState
                 )
                 .map((row) {
                   final entry = CustomerPendingEntry.fromMap(row);
-                  final reversed = row['is_reversed'] == true;
-                  final status = switch (row['confirmation_status']) {
-                    'confirmed' => 'مؤكدة',
-                    'pending' => 'بانتظار التأكيد',
-                    _ => 'غير متاح',
-                  };
+                  final focused = row['id'] == widget.focusEntryId;
                   return Card(
+                    elevation: 0,
+                    margin: const EdgeInsets.only(top: 6),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    color: focused
+                        ? AppColors.primary.withValues(alpha: .08)
+                        : AppColors.white,
                     child: ListTile(
                       onTap: () => Navigator.push(
                         context,
-                        MaterialPageRoute(
+                        AppRoutes.accountPage(
                           builder: (_) => CustomerEntryDetailsScreen(
                             ownerId: _owner,
                             businessName: widget.summary.businessName,
@@ -300,23 +544,52 @@ class _CustomerAccountLedgerScreenState
                           ),
                         ),
                       ),
-                      trailing: const Icon(Icons.chevron_left),
-                      leading: Icon(
-                        entry.direction == 'debit'
-                            ? Icons.arrow_upward
-                            : Icons.arrow_downward,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 2,
                       ),
-                      title: Text(
-                        '${types[entry.entryType] ?? entry.entryType} • ${formatter.format(entry.amount)} ${entry.currencyCode}',
+                      dense: true,
+                      minLeadingWidth: 28,
+                      horizontalTitleGap: 8,
+                      trailing: const Icon(Icons.chevron_left, size: 18),
+                      leading: CircleAvatar(
+                        radius: 15,
+                        backgroundColor: AppColors.transactionColor(
+                          entry.entryType,
+                        ).withValues(alpha: .10),
+                        child: Icon(
+                          AppIcons.transaction(entry.entryType),
+                          size: 16,
+                          color: AppColors.transactionColor(entry.entryType),
+                        ),
                       ),
-                      subtitle: Text(
-                        '${entry.description}\n${entry.occurredAt}\n${reversed ? 'معكوسة • ' : ''}$status${row['dispute_status'] == 'open'
-                            ? ' • اعتراض مفتوح'
-                            : row['dispute_status'] == 'resolved'
-                            ? ' • تمت معالجة الاعتراض'
-                            : ''}',
+                      title: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              types[entry.entryType] ?? entry.entryType,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              '\u2066${formatter.format(entry.amount)}\u2069 ${entry.currencyCode}',
+                              textAlign: TextAlign.end,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: entry.direction == 'debit'
+                                    ? AppColors.debtRed
+                                    : AppColors.paymentGreen,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                      isThreeLine: true,
                     ),
                   );
                 }),

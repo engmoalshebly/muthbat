@@ -8,6 +8,7 @@ import '../../../../app/theme/app_typography.dart';
 import '../../../../shared/widgets/custom_button.dart';
 import '../../data/models/business_customer_model.dart';
 import '../../data/models/statement_model.dart';
+import '../../data/merchant_api_exception.dart';
 import '../controllers/merchant_controller.dart';
 
 /// نافذة إنشاء كشف حساب PDF موثق (Generate Statement Sheet)
@@ -59,6 +60,7 @@ class _GenerateStatementSheetState
     final toIso = _toDate.toIso8601String();
 
     StatementModel? stmt;
+    String? errorMessage;
     try {
       final repository = ref.read(merchantRepositoryProvider);
       if (_allCurrencies) {
@@ -84,7 +86,8 @@ class _GenerateStatementSheetState
           currencyCode: _selectedCurrency,
         );
       }
-    } catch (_) {
+    } catch (error) {
+      errorMessage = error is MerchantApiException ? error.message : null;
       stmt = null;
     }
 
@@ -99,9 +102,10 @@ class _GenerateStatementSheetState
         );
       } else {
         TopNotice.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'تعذر إنشاء كشف الحساب. تحقق من الاتصال وحاول مرة أخرى.',
+              errorMessage ??
+                  'تعذر إنشاء كشف الحساب من بيانات الجهاز. تحقق من الفترة المحددة وحاول مرة أخرى.',
             ),
             backgroundColor: AppColors.error,
           ),
@@ -122,7 +126,7 @@ class _GenerateStatementSheetState
         bottom: MediaQuery.of(context).viewInsets.bottom + 24,
       ),
       decoration: const BoxDecoration(
-        color: Colors.white,
+        color: AppColors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       child: Column(
@@ -146,7 +150,7 @@ class _GenerateStatementSheetState
           Container(
             padding: const EdgeInsets.all(16),
             decoration: const BoxDecoration(
-              gradient: AppColors.brandGradient,
+              gradient: AppColors.cardGradient,
               borderRadius: BorderRadius.all(Radius.circular(20)),
             ),
             child: Row(
@@ -154,12 +158,12 @@ class _GenerateStatementSheetState
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.15),
+                    color: AppColors.white.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: const Icon(
                     Icons.picture_as_pdf_rounded,
-                    color: Colors.white,
+                    color: AppColors.white,
                     size: 28,
                   ),
                 ),
@@ -170,7 +174,9 @@ class _GenerateStatementSheetState
                     children: [
                       Text(
                         'كشف حساب رسمي موثق',
-                        style: AppTypography.titleMedium(color: Colors.white),
+                        style: AppTypography.titleMedium(
+                          color: AppColors.white,
+                        ),
                       ),
                       const SizedBox(height: 2),
                       Text(
@@ -385,7 +391,7 @@ class _GenerateStatementSheetState
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
-                color: isSelected ? Colors.white : AppColors.textPrimary,
+                color: isSelected ? AppColors.white : AppColors.textPrimary,
               ),
             ),
           ),

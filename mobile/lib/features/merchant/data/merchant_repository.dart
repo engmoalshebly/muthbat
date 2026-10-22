@@ -1,20 +1,23 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:sqflite_sqlcipher/sqflite.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/database/app_database.dart';
-import '../../../core/config/supabase_config.dart';
+import '../../../core/finance/money.dart';
+import '../../../core/finance/currency_info.dart';
+import '../../../core/validation/customer_phone.dart';
 import '../../../core/sync/sync_engine.dart';
 import 'merchant_api_exception.dart';
+import 'business_logo.dart';
+import 'local_statement_totals.dart';
 import 'models/business_customer_model.dart';
 import 'models/dispute_message_model.dart';
 import 'models/dispute_model.dart';
 import 'models/ledger_entry_model.dart';
-import 'models/member_model.dart';
 import 'models/statement_model.dart';
 import 'rpc_contract.dart';
 
@@ -24,6 +27,20 @@ import 'rpc_contract.dart';
 /// وكل الأخطاء تُرمى كـ [MerchantApiException] غنية — ممنوع `return false/null`
 /// الصامت (خطة 06 خطوة 3.9).
 class MerchantRepository {
+  MerchantRepository({void Function()? requestSync})
+    : _requestSync = requestSync ?? _startSync;
+  final void Function() _requestSync;
+  static Timer? _syncDebounce;
+  static void _startSync() {
+    final owner = AppDatabase.instance.accountId;
+    _syncDebounce?.cancel();
+    _syncDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (owner != null && AppDatabase.instance.accountId == owner) {
+        unawaited(SyncEngine.instance.triggerSync());
+      }
+    });
+  }
+
   final _uuid = const Uuid();
 
   static final RegExp _uuidRegex = RegExp(
@@ -34,20 +51,67 @@ class MerchantRepository {
   Future<List<BusinessCustomerModel>> getCustomers(
     String businessId, {
     String? searchQuery,
+    int? limit,
+    int offset = 0,
   }) async {
     final rows = await AppDatabase.instance.getBusinessCustomers(
       businessId,
       searchQuery: searchQuery,
+      limit: limit,
+      offset: offset,
     );
     final List<BusinessCustomerModel> result = [];
 
+    if (rows.isEmpty) return [];
+    final allBalances = await AppDatabase.instance.getBusinessCurrencyBalances(
+      businessId,
+      customerIds: limit == null
+          ? null
+          : rows.map((r) => r['id'] as String).toList(),
+    );
     for (final row in rows) {
       final custId = row['id'] as String;
-      final currencyBals = await AppDatabase.instance
-          .getCustomerCurrencyBalances(custId);
+      final currencyBals = allBalances[custId] ?? <String, double>{};
       result.add(BusinessCustomerModel.fromMap(row, currencyBals));
     }
     return result;
+  }
+
+  Future<List<BusinessCustomerModel>> getDashboardCustomers(
+    String businessId,
+    String baseCurrency,
+  ) async {
+    final db = await AppDatabase.instance.database;
+    final rows = await db.rawQuery(
+      '''WITH amounts AS (
+      SELECT b.business_customer_id id,b.currency_code,b.current_balance_minor minor
+      FROM local_customer_currency_balances b JOIN local_business_customers c ON c.id=b.business_customer_id
+      WHERE c.business_id=? AND c.is_archived=0
+      UNION ALL SELECT c.id,?,c.current_balance_minor FROM local_business_customers c
+      WHERE c.business_id=? AND c.is_archived=0 AND NOT EXISTS(SELECT 1 FROM local_customer_currency_balances b WHERE b.business_customer_id=c.id)
+    ), ranked AS (SELECT id,minor,ROW_NUMBER() OVER(PARTITION BY currency_code ORDER BY minor DESC,id) position FROM amounts),
+    wanted AS (SELECT id FROM ranked WHERE position<=10 AND minor>0
+      UNION SELECT business_customer_id FROM (SELECT business_customer_id FROM local_ledger_entries WHERE business_id=? ORDER BY occurred_at DESC,created_at DESC LIMIT 10)
+      UNION SELECT id FROM (SELECT id FROM local_business_customers WHERE business_id=? AND is_archived=0 ORDER BY updated_at DESC,id LIMIT 4))
+    SELECT c.* FROM local_business_customers c WHERE c.business_id=? AND c.id IN (SELECT id FROM wanted)
+    ORDER BY c.updated_at DESC,c.id''',
+      [
+        businessId,
+        baseCurrency,
+        businessId,
+        businessId,
+        businessId,
+        businessId,
+      ],
+    );
+    if (rows.isEmpty) return [];
+    final balances = await AppDatabase.instance.getBusinessCurrencyBalances(
+      businessId,
+      customerIds: rows.map((r) => r['id'] as String).toList(),
+    );
+    return rows
+        .map((r) => BusinessCustomerModel.fromMap(r, balances[r['id']] ?? {}))
+        .toList();
   }
 
   /// إنشاء منشأة تجارية جديدة للمستخدم
@@ -65,145 +129,119 @@ class MerchantRepository {
     Uint8List? logoBytes,
     String logoExtension = 'jpg',
   }) async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) {
+    final store = AppDatabase.instance;
+    final owner = store.accountId;
+    if (owner == null) {
       throw const MerchantApiException(
         code: 'unauthenticated',
-        message: 'لم يتم تسجيل الدخول. سجّل دخولك أولاً.',
+        message: 'سجّل الدخول لإنشاء النشاط',
       );
     }
-
-    final now = DateTime.now().toIso8601String();
-    final client = Supabase.instance.client;
-
-    try {
-      final res = await client.rpc(
-        RpcContract.createBusiness,
-        params: {
-          'p_name': name.trim(),
-          'p_business_type': businessType.trim(),
-          'p_currency_code': currencyCode.toUpperCase(),
-          'p_additional_currencies': additionalCurrencies
-              .map((code) => code.toUpperCase())
-              .toList(),
-          'p_country_code': countryCode.toUpperCase(),
-          'p_city': city?.trim(),
-          'p_address': address?.trim(),
-        },
+    if (name.trim().length < 2 ||
+        name.trim().length > 120 ||
+        businessType.trim().length < 2 ||
+        businessType.trim().length > 120 ||
+        (city?.trim().length ?? 0) > 120 ||
+        (address?.trim().length ?? 0) > 500 ||
+        !RegExp(r'^[A-Z]{2}$').hasMatch(countryCode.toUpperCase()) ||
+        !CurrencyCatalog.allowedCodes.contains(currencyCode.toUpperCase()) ||
+        additionalCurrencies.any(
+          (code) => !CurrencyCatalog.allowedCodes.contains(code.toUpperCase()),
+        )) {
+      throw const FormatException('اسم النشاط ونوعه مطلوبان');
+    }
+    final phone = contactPhoneDisplay?.trim().isNotEmpty == true
+        ? normalizeCustomerPhone(contactPhoneDisplay!)
+        : null;
+    final now = DateTime.now().toUtc().toIso8601String();
+    final localId = 'biz-${_uuid.v4()}', requestId = _uuid.v4();
+    final extra =
+        additionalCurrencies
+            .map((c) => c.toUpperCase())
+            .where((c) => c != currencyCode.toUpperCase())
+            .toSet()
+            .toList()
+          ..sort();
+    if (logoBytes != null && logoBytes.length > 5 * 1024 * 1024) {
+      throw const FormatException('حجم الشعار يتجاوز 5 ميجابايت');
+    }
+    final business = <String, dynamic>{
+      'id': localId,
+      'owner_user_id': owner,
+      'name': name.trim(),
+      'business_type': businessType.trim(),
+      'currency_code': currencyCode.toUpperCase(),
+      'additional_currencies': jsonEncode(extra),
+      'country_code': countryCode.toUpperCase(),
+      'city': city?.trim(),
+      'address': address?.trim(),
+      'contact_phone': phone,
+      'timezone': 'Asia/Aden',
+      'is_active': 1,
+      'created_at': now,
+    };
+    final db = await store.database;
+    await db.transaction((txn) async {
+      // The setup form may be submitted again after reopening or a double tap.
+      final existing = await txn.query(
+        'offline_mutations_queue',
+        where: "command_type='create_business' AND status!='dead_letter'",
+        limit: 1,
       );
-
-      final businessId = res as String;
-      String? logoPath;
-      if (logoBytes != null) {
-        final safeExtension =
-            {'jpg', 'jpeg', 'png', 'webp'}.contains(logoExtension.toLowerCase())
-            ? logoExtension.toLowerCase()
-            : 'jpg';
-        logoPath = '$businessId/logo.$safeExtension';
-        try {
-          await client.storage
-              .from('business-assets')
-              .uploadBinary(
-                logoPath,
-                logoBytes,
-                fileOptions: const FileOptions(upsert: true),
-              );
-        } catch (e) {
-          // الشعار اختياري؛ لا نلغي إنشاء المنشأة إذا فشل رفعه.
-          debugPrint('[MerchantRepository] logo upload deferred: $e');
-          logoPath = null;
-        }
-      }
-      if (logoPath != null ||
-          (contactPhoneDisplay?.trim().isNotEmpty ?? false)) {
-        await client
-            .from('businesses')
-            .update({
-              'logo_path': ?logoPath,
-              if (contactPhoneDisplay?.trim().isNotEmpty ?? false)
-                'contact_phone_display': contactPhoneDisplay!.trim(),
-            })
-            .eq('id', businessId);
-      }
-      final bizData = {
-        'id': businessId,
-        'owner_user_id': user.id,
-        'name': name.trim(),
-        'business_type': businessType.trim(),
-        'currency_code': currencyCode.toUpperCase(),
-        'additional_currencies': jsonEncode(
-          additionalCurrencies.map((code) => code.toUpperCase()).toList(),
-        ),
-        'country_code': countryCode.toUpperCase(),
-        'city': city?.trim(),
-        'address': address?.trim(),
-        'contact_phone': contactPhoneDisplay?.trim(),
-        'logo_path': logoPath,
-        'timezone': 'Asia/Aden',
-        'is_active': 1,
-        'created_at': now,
-      };
-
-      await AppDatabase.instance.saveBusiness(bizData);
-      return bizData;
-    } catch (e) {
-      if (!MerchantApiException.isNetworkError(e)) {
-        throw MerchantApiException.from(e);
-      }
-
-      // المسار الأوفلاين: حفظ محلي + إدراج في طابور الأوامر
-      final localBizId = 'biz-${_uuid.v4()}';
-      final clientRequestId = _uuid.v4();
-
-      final bizData = {
-        'id': localBizId,
-        'owner_user_id': user.id,
-        'name': name.trim(),
-        'business_type': businessType.trim(),
-        'currency_code': currencyCode.toUpperCase(),
-        'additional_currencies': jsonEncode(
-          additionalCurrencies.map((code) => code.toUpperCase()).toList(),
-        ),
-        'country_code': countryCode.toUpperCase(),
-        'city': city?.trim(),
-        'address': address?.trim(),
-        'contact_phone': contactPhoneDisplay?.trim(),
-        'timezone': 'Asia/Aden',
-        'is_active': 1,
-        'created_at': now,
-      };
-
-      final db = await AppDatabase.instance.database;
-      await db.transaction((txn) async {
-        await txn.insert(
-          'local_businesses',
-          bizData,
-          conflictAlgorithm: ConflictAlgorithm.replace,
+      if (existing.isNotEmpty) {
+        throw StateError(
+          'يوجد طلب إنشاء نشاط محفوظ. انتظر مزامنته قبل إنشاء نشاط آخر',
         );
-        await txn.insert('offline_mutations_queue', {
-          'client_request_id': clientRequestId,
-          'command_type': RpcContract.cmdCreateBusiness,
-          'payload_json': jsonEncode({
-            'p_name': name.trim(),
-            'p_business_type': businessType.trim(),
-            'p_currency_code': currencyCode.toUpperCase(),
-            'p_additional_currencies': additionalCurrencies
-                .map((code) => code.toUpperCase())
-                .toList(),
-            'p_country_code': countryCode.toUpperCase(),
-            'p_city': city?.trim(),
-            'p_address': address?.trim(),
-          }),
-          'local_ref_id': localBizId,
-          'status': 'pending',
-          'created_at': now,
-          'attempt_count': 0,
-        });
+      }
+      await txn.insert('local_businesses', business);
+      await txn.insert('offline_mutations_queue', {
+        'client_request_id': requestId,
+        'command_type': 'create_business',
+        'payload_json': jsonEncode({
+          'p_profile': {
+            'name': name.trim(),
+            'business_type': businessType.trim(),
+            'currency_code': currencyCode.toUpperCase(),
+            'additional_currencies': extra,
+            'country_code': countryCode.toUpperCase(),
+            'city': city?.trim(),
+            'address': address?.trim(),
+            'contact_phone': phone,
+          },
+        }),
+        'local_ref_id': localId,
+        'status': 'pending',
+        'attempt_count': 0,
+        'created_at': now,
       });
-
-      SyncEngine.instance.triggerSync();
-      return bizData;
-    }
+      await txn.insert('local_sync_state', {
+        'key': 'business_access_v1',
+        'value': jsonEncode({
+          'user_id': owner,
+          'business_id': localId,
+          'role': 'owner',
+        }),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      if (logoBytes != null) {
+        await txn.insert('offline_mutations_queue', {
+          'client_request_id': _uuid.v4(),
+          'command_type': 'upload_business_logo',
+          'payload_json': jsonEncode({
+            'businessId': localId,
+            'bytes': base64Encode(logoBytes),
+            'extension': logoExtension,
+          }),
+          'local_ref_id': localId,
+          'status': 'pending',
+          'attempt_count': 0,
+          'depends_on_client_request_id': requestId,
+          'created_at': now,
+        });
+      }
+    });
+    await store.rememberOwner();
+    _requestSync();
+    return business;
   }
 
   /// تحديث العملات الإضافية عبر أمر خادمي يمنع تعطيل عملة مستخدمة في قيود.
@@ -211,30 +249,67 @@ class MerchantRepository {
     required String businessId,
     required List<String> additionalCurrencies,
   }) async {
-    try {
-      final result = await Supabase.instance.client.rpc(
-        RpcContract.updateBusinessCurrencies,
-        params: {
-          'p_business_id': businessId,
-          'p_additional_currencies': additionalCurrencies
-              .map((code) => code.toUpperCase())
-              .toList(),
-        },
+    final requested =
+        additionalCurrencies
+            .map((code) => code.trim().toUpperCase())
+            .toSet()
+            .toList()
+          ..sort();
+    if (requested.any((code) => !CurrencyCatalog.allowedCodes.contains(code))) {
+      throw const MerchantApiException(
+        code: 'unsupported_currency',
+        message:
+            'العملات المتاحة هي الريال اليمني والسعودي والدولار الأمريكي فقط.',
       );
-      final saved = (result as List<dynamic>)
-          .map((value) => value.toString().toUpperCase())
-          .toList();
-      final db = await AppDatabase.instance.database;
-      await db.update(
+    }
+    final db = await AppDatabase.instance.database;
+    final requestId = _uuid.v4();
+    final now = DateTime.now().toUtc().toIso8601String();
+    await db.transaction((txn) async {
+      final rows = await txn.query(
         'local_businesses',
-        {'additional_currencies': jsonEncode(saved)},
-        where: 'id = ?',
+        where: 'id=?',
+        whereArgs: [businessId],
+        limit: 1,
+      );
+      if (rows.isEmpty) throw StateError('business_not_found');
+      final base = (rows.first['currency_code'] as String).toUpperCase();
+      if (!CurrencyCatalog.allowedCodes.contains(base) ||
+          requested.contains(base)) {
+        throw StateError('invalid_business_currencies');
+      }
+      final existing = await txn.query(
+        'offline_mutations_queue',
+        columns: ['id'],
+        where:
+            "local_ref_id=? AND command_type='update_business_currencies_idempotent' AND status!='dead_letter'",
+        whereArgs: [businessId],
+        limit: 1,
+      );
+      if (existing.isNotEmpty) throw StateError('currency_change_pending');
+      final previous = rows.first['additional_currencies'] as String? ?? '[]';
+      await txn.update(
+        'local_businesses',
+        {'additional_currencies': jsonEncode(requested)},
+        where: 'id=?',
         whereArgs: [businessId],
       );
-      return saved;
-    } catch (e) {
-      throw MerchantApiException.from(e);
-    }
+      await txn.insert('offline_mutations_queue', {
+        'client_request_id': requestId,
+        'command_type': 'update_business_currencies_idempotent',
+        'payload_json': jsonEncode({
+          'p_business_id': businessId,
+          'p_additional_currencies': requested,
+          'previous': previous,
+        }),
+        'local_ref_id': businessId,
+        'status': 'pending',
+        'attempt_count': 0,
+        'created_at': now,
+      });
+    });
+    _requestSync();
+    return requested;
   }
 
   Future<void> updateBusinessLogo({
@@ -242,45 +317,55 @@ class MerchantRepository {
     required Uint8List bytes,
     required String extension,
   }) async {
-    if (bytes.isEmpty || bytes.length > 5 * 1024 * 1024) {
-      throw const MerchantApiException(
-        code: 'invalid_logo_size',
-        message: 'يجب أن يكون الشعار صورة صالحة وحجمه أقل من 5 ميجابايت.',
-      );
-    }
-    final safeExtension =
-        {'jpg', 'jpeg', 'png', 'webp'}.contains(extension.toLowerCase())
-        ? extension.toLowerCase()
-        : 'jpg';
-    final objectPath = '$businessId/logo.$safeExtension';
-    final contentType = safeExtension == 'png'
-        ? 'image/png'
-        : safeExtension == 'webp'
-        ? 'image/webp'
-        : 'image/jpeg';
-    try {
-      final client = Supabase.instance.client;
-      await client.storage
-          .from('business-assets')
-          .uploadBinary(
-            objectPath,
-            bytes,
-            fileOptions: FileOptions(upsert: true, contentType: contentType),
-          );
-      await client
-          .from('businesses')
-          .update({'logo_path': objectPath})
-          .eq('id', businessId);
-      final db = await AppDatabase.instance.database;
-      await db.update(
+    final normalizedBytes = await prepareBusinessLogo(bytes);
+    final requestId = _uuid.v4();
+    final db = await AppDatabase.instance.database;
+    await db.transaction((txn) async {
+      final businesses = await txn.query(
         'local_businesses',
-        {'logo_path': objectPath},
-        where: 'id = ?',
+        columns: ['owner_user_id'],
+        where: 'id=?',
         whereArgs: [businessId],
+        limit: 1,
       );
-    } catch (e) {
-      throw MerchantApiException.from(e);
-    }
+      if (businesses.isEmpty ||
+          AppDatabase.instance.accountId == null ||
+          businesses.first['owner_user_id'] != AppDatabase.instance.accountId) {
+        throw const MerchantApiException(
+          code: '42501',
+          message: 'تغيير الشعار متاح لمالك المتجر فقط.',
+        );
+      }
+      final existing = await txn.query(
+        'offline_mutations_queue',
+        columns: ['id'],
+        where:
+            "local_ref_id=? AND command_type='upload_business_logo' AND status!='dead_letter'",
+        whereArgs: [businessId],
+        limit: 1,
+      );
+      if (existing.isNotEmpty) {
+        throw const MerchantApiException(
+          code: 'logo_change_pending',
+          message:
+              'يوجد شعار محفوظ بانتظار المزامنة. انتظر اكتمال رفعه قبل تغييره.',
+        );
+      }
+      await txn.insert('offline_mutations_queue', {
+        'client_request_id': requestId,
+        'command_type': 'upload_business_logo',
+        'payload_json': jsonEncode({
+          'businessId': businessId,
+          'bytes': base64Encode(normalizedBytes),
+          'extension': 'png',
+        }),
+        'local_ref_id': businessId,
+        'status': 'pending',
+        'attempt_count': 0,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+      });
+    });
+    _requestSync();
   }
 
   /// تحديث ملف المنشأة محلياً فوراً ثم مزامنته مع الخادم.
@@ -333,7 +418,7 @@ class MerchantRepository {
         'created_at': now,
       });
     });
-    SyncEngine.instance.triggerSync();
+    _requestSync();
   }
 
   /// قراءة بيانات عميل محدد
@@ -353,58 +438,50 @@ class MerchantRepository {
     double? creditLimit,
     int? defaultDueDays,
   }) async {
-    final result = await Supabase.instance.client.rpc(
-      'update_business_customer_profile',
-      params: {
-        'p_business_customer_id': customerId,
-        'p_display_name': displayName.trim(),
-        'p_note': note?.trim(),
-        'p_credit_limit': creditLimit,
-        'p_default_due_days': defaultDueDays,
-      },
-    );
-    if (result is! Map || result['updated'] != true) {
-      throw const MerchantApiException(
-        code: 'not_updated',
-        message: 'لم يؤكد الخادم حفظ بيانات العميل',
-      );
+    if (displayName.trim().length < 2 ||
+        displayName.trim().length > 120 ||
+        (note?.length ?? 0) > 2000 ||
+        (creditLimit != null && creditLimit < 0) ||
+        (defaultDueDays != null &&
+            (defaultDueDays < 0 || defaultDueDays > 3650))) {
+      throw const FormatException('بيانات العميل غير صالحة');
     }
-    final db = await AppDatabase.instance.database;
-    await db.update(
-      'local_business_customers',
+    await AppDatabase.instance.queueCustomerProfileChange(
+      customerId,
       {
         'local_display_name': displayName.trim(),
         'local_note': note?.trim(),
         'credit_limit': creditLimit,
+        'credit_limit_minor': creditLimit == null
+            ? null
+            : Money.fromNum(creditLimit).minorUnits,
         'default_due_days': defaultDueDays,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
       },
-      where: 'id = ?',
-      whereArgs: [customerId],
+      {
+        'p_business_customer_id': customerId,
+        'p_action': 'update',
+        'p_profile': {
+          'display_name': displayName.trim(),
+          'note': note?.trim(),
+          'credit_limit': creditLimit,
+          'default_due_days': defaultDueDays,
+        },
+      },
     );
+    _requestSync();
   }
 
   Future<void> archiveCustomer(String customerId) async {
-    final result = await Supabase.instance.client.rpc(
-      'archive_business_customer',
-      params: {'p_business_customer_id': customerId},
-    );
-    if (result is! Map || result['archived'] != true) {
-      throw const MerchantApiException(
-        code: 'not_archived',
-        message: 'لم يؤكد الخادم أرشفة العميل',
-      );
-    }
-    final db = await AppDatabase.instance.database;
-    await db.update(
-      'local_business_customers',
+    await AppDatabase.instance.queueCustomerProfileChange(
+      customerId,
+      {'is_archived': 1},
       {
-        'is_archived': 1,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
+        'p_business_customer_id': customerId,
+        'p_action': 'archive',
+        'p_profile': <String, dynamic>{},
       },
-      where: 'id = ?',
-      whereArgs: [customerId],
     );
+    _requestSync();
   }
 
   /// قراءة القيود المالية للعميل من الكاش المحلي
@@ -436,11 +513,25 @@ class MerchantRepository {
     int? defaultDueDays,
   }) async {
     final rawPhone = phone?.trim() ?? '';
-    final trimmedPhone = rawPhone.isNotEmpty
-        ? (rawPhone.startsWith('+')
-              ? rawPhone
-              : (rawPhone.startsWith('967') ? '+$rawPhone' : '+967$rawPhone'))
-        : '';
+    final trimmedPhone = rawPhone.isEmpty
+        ? ''
+        : normalizeCustomerPhone(rawPhone);
+    if (trimmedPhone.isNotEmpty) {
+      final db = await AppDatabase.instance.database;
+      final duplicates = await db.query(
+        'local_business_customers',
+        columns: ['id'],
+        where: 'business_id=? AND phone=?',
+        whereArgs: [businessId, trimmedPhone],
+        limit: 1,
+      );
+      if (duplicates.isNotEmpty) {
+        throw const MerchantApiException(
+          code: 'customer_exists',
+          message: 'رقم الهاتف مسجل لدى عميل في هذا النشاط',
+        );
+      }
+    }
     final now = DateTime.now().toIso8601String();
     // Local-first دائماً: لا تنتظر الشاشة الشبكة. يتولى SyncEngine الإرسال.
     final localId = 'cust-${_uuid.v4()}';
@@ -466,6 +557,7 @@ class MerchantRepository {
       'businessId': businessId,
       if (trimmedPhone.isNotEmpty) 'phone': trimmedPhone,
       'localDisplayName': localDisplayName.trim(),
+      'localNote': ?localNote?.trim(),
       'creditLimit': ?creditLimit,
       'defaultDueDays': ?defaultDueDays,
       'requestLink': trimmedPhone.isNotEmpty,
@@ -473,6 +565,13 @@ class MerchantRepository {
     };
     final db = await AppDatabase.instance.database;
     await db.transaction((txn) async {
+      final parent = await txn.query(
+        'offline_mutations_queue',
+        columns: ['client_request_id'],
+        where: 'command_type = ? AND local_ref_id = ?',
+        whereArgs: ['create_business', businessId],
+        limit: 1,
+      );
       await txn.insert(
         'local_business_customers',
         customer.toMap(),
@@ -481,6 +580,8 @@ class MerchantRepository {
       await txn.insert('offline_mutations_queue', {
         'client_request_id': _uuid.v4(),
         'command_type': RpcContract.cmdCustomerDirectory,
+        if (parent.isNotEmpty)
+          'depends_on_client_request_id': parent.first['client_request_id'],
         'payload_json': jsonEncode(payload),
         'local_ref_id': localId,
         'status': 'pending',
@@ -488,7 +589,7 @@ class MerchantRepository {
         'created_at': now,
       });
     });
-    SyncEngine.instance.triggerSync();
+    _requestSync();
     return customer;
   }
 
@@ -581,13 +682,45 @@ class MerchantRepository {
   /// الحمولة بالتوقيع الموسع (ترحيل توحيد العقد): التصنيف/السداد/المرجع تُرسل
   /// للخادم، والعملة تُشتق خلفياً من المحل (لا يُرسل p_currency_code — قرار 1)،
   /// و`p_attachment_url` يبقى null حتى خط أنابيب المرفقات (قرار 19).
+  Future<String> _validatedCurrencyAmount(
+    double amount,
+    String currencyCode,
+  ) async {
+    final code = currencyCode.trim().toUpperCase();
+    if (!CurrencyCatalog.allowedCodes.contains(code) ||
+        !amount.isFinite ||
+        amount <= 0 ||
+        amount > 900000000000000) {
+      throw const MerchantApiException(
+        code: 'invalid_amount',
+        message: 'أدخل مبلغًا موجبًا وعملة صحيحة.',
+      );
+    }
+    final currencies = await AppDatabase.instance.getCurrencies();
+    final scale = CurrencyCatalog.forCode(
+      code,
+      currencies.isEmpty ? CurrencyCatalog.defaults : currencies,
+    ).decimalScale;
+    try {
+      return Money.fromCurrencyText(
+        amount.toString(),
+        decimalScale: scale,
+      ).toDecimalString();
+    } on FormatException {
+      throw MerchantApiException(
+        code: 'invalid_currency_precision',
+        message: 'المبلغ لا يطابق دقة العملة $code ($scale منازل عشرية).',
+      );
+    }
+  }
+
   Future<LedgerEntryModel> createLedgerEntry({
     required String businessId,
     required String businessCustomerId,
     required String entryType, // 'debt' or 'payment'
     required double amount,
     required String description,
-    String currencyCode = 'YER',
+    required String currencyCode,
     String category = 'goods',
     String paymentMethod = 'cash',
     String? referenceNumber,
@@ -596,6 +729,12 @@ class MerchantRepository {
     String? dueDate,
     String? externalReference,
   }) async {
+    final canonicalAmount = await _validatedCurrencyAmount(
+      amount,
+      currencyCode,
+    );
+    amount = double.parse(canonicalAmount);
+    currencyCode = currencyCode.trim().toUpperCase();
     final clientRequestId = _uuid.v4();
     final entryId = 'entry-$clientRequestId';
     final now = DateTime.now().toIso8601String();
@@ -665,7 +804,7 @@ class MerchantRepository {
     );
 
     // إطلاق محرك المزامنة في الخلفية
-    SyncEngine.instance.triggerSync();
+    _requestSync();
 
     return entry;
   }
@@ -686,8 +825,14 @@ class MerchantRepository {
     required String businessCustomerId,
     required double amount,
     required String description,
-    String currencyCode = 'YER',
+    required String currencyCode,
   }) async {
+    final canonicalAmount = await _validatedCurrencyAmount(
+      amount,
+      currencyCode,
+    );
+    amount = double.parse(canonicalAmount);
+    currencyCode = currencyCode.trim().toUpperCase();
     final clientRequestId = _uuid.v4();
     final entryId = 'entry-$clientRequestId';
     final now = DateTime.now().toIso8601String();
@@ -726,7 +871,7 @@ class MerchantRepository {
       payload: payload,
     );
 
-    SyncEngine.instance.triggerSync();
+    _requestSync();
 
     return entry;
   }
@@ -736,7 +881,7 @@ class MerchantRepository {
     required String businessCustomerId,
     required double amount,
     required String description,
-    String currencyCode = 'YER',
+    required String currencyCode,
   }) => applyCustomerDiscount(
     businessId: businessId,
     businessCustomerId: businessCustomerId,
@@ -757,8 +902,15 @@ class MerchantRepository {
     required String originalDirection,
     required double originalAmount,
     required String reason,
-    String currencyCode = 'YER',
+    required String currencyCode,
   }) async {
+    currencyCode = currencyCode.trim().toUpperCase();
+    if (!_uuidRegex.hasMatch(originalEntryId)) {
+      throw const MerchantApiException(
+        code: 'unsynced_reversal_target',
+        message: 'زامن القيد الأصلي قبل عكسه.',
+      );
+    }
     final clientRequestId = _uuid.v4();
     final entryId = 'entry-$clientRequestId';
     final now = DateTime.now().toIso8601String();
@@ -794,106 +946,114 @@ class MerchantRepository {
       entry: entry.toMap(),
       commandType: RpcContract.cmdReverseLedgerEntry,
       payload: payload,
+      reversalOfEntryId: originalEntryId,
     );
 
-    SyncEngine.instance.triggerSync();
+    _requestSync();
 
     return entry;
   }
 
   // ==================== عمليات الاعتراضات والنزاعات (Disputes) ====================
 
-  /// جلب كافة الاعتراضات الخاصة بالمحل.
-  ///
-  /// التضمين المصحح (خطة 06 خطوة 3.3): لا يوجد FK باسم `profiles!customer_id`؛
-  /// اسم العميل يُقرأ من المسار المتداخل ledger_entries→business_customers،
-  /// و`global_code` من customers (الهاتف مشفر خلفياً ولا يُعرض).
-  /// السقوط إلى الكاش المحلي يحدث عند انقطاع الشبكة فقط — أخطاء العقد تُرمى.
-  Future<List<DisputeModel>> getDisputes(String businessId) async {
-    try {
-      final client = Supabase.instance.client;
-      final res = await client
-          .from('disputes')
-          .select('''
-            id, entry_id, business_id, customer_id, reason, description, created_at,
-            dispute_state (status, resolution_note, resolved_at),
-            ledger_entries (amount, currency_code, entry_type, description, occurred_at,
-                            business_customers (local_display_name)),
-            customers (global_code)
-          ''')
-          .eq('business_id', businessId)
-          .order('created_at', ascending: false);
-
-      final disputes = (res as List)
-          .map((row) => DisputeModel.fromMap(row))
-          .toList();
-
-      final db = await AppDatabase.instance.database;
-      for (final d in disputes) {
-        await db.insert(
-          'local_disputes',
-          d.toMap(),
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-      }
-
-      return disputes;
-    } catch (e) {
-      if (MerchantApiException.isNetworkError(e)) {
-        return _getLocalDisputes(businessId);
-      }
-      throw MerchantApiException.from(e);
-    }
-  }
+  /// الاعتراضات وبيانات القيد والعميل من SQLite؛ يتولى SyncEngine تحديثها.
+  Future<List<DisputeModel>> getDisputes(String businessId) =>
+      _getLocalDisputes(businessId);
 
   Future<List<DisputeModel>> _getLocalDisputes(String businessId) async {
     final db = await AppDatabase.instance.database;
-    final rows = await db.query(
-      'local_disputes',
-      where: 'business_id = ?',
-      whereArgs: [businessId],
-      orderBy: 'created_at DESC',
+    final rows = await db.rawQuery(
+      '''SELECT d.*, c.local_display_name,
+      e.amount AS entry_amount, e.description AS entry_description,
+      e.entry_type, e.occurred_at AS entry_occurred_at, e.currency_code
+      FROM local_disputes d LEFT JOIN local_ledger_entries e ON e.id=d.entry_id
+      LEFT JOIN local_business_customers c ON c.id=e.business_customer_id
+      WHERE d.business_id=? ORDER BY d.created_at DESC,d.id''',
+      [businessId],
     );
     return rows.map((e) => DisputeModel.fromMap(e)).toList();
   }
+
+  /// Dashboard reads the synchronized cache; network pulls belong to SyncEngine.
+  Future<List<DisputeModel>> getCachedDisputes(String businessId) =>
+      _getLocalDisputes(businessId);
 
   /// محادثة النزاع (خطة 06 خطوة 3.4): العمود الفعلي `sender_user_id`
   /// (وليس `sender_id` الشبح)، وبلا تضمين profiles (لا FK وسياسة
   /// profiles_select_own تمنع قراءة الآخرين). تسمية المرسل تُشتق في العميل.
   Future<List<DisputeMessageModel>> getDisputeMessages(String disputeId) async {
-    final client = Supabase.instance.client;
-    try {
-      final res = await client
-          .from('dispute_messages')
-          .select('id, dispute_id, sender_user_id, message, created_at')
-          .eq('dispute_id', disputeId)
-          .order('created_at', ascending: true);
-
-      final currentUserId = client.auth.currentUser?.id;
-      return (res as List)
-          .map(
-            (r) => DisputeMessageModel.fromMap(r, currentUserId: currentUserId),
-          )
-          .toList();
-    } catch (e) {
-      if (MerchantApiException.isNetworkError(e)) return const [];
-      throw MerchantApiException.from(e);
-    }
+    final owner = AppDatabase.instance.accountId;
+    final rows = await AppDatabase.instance.getLocalDisputeMessages(disputeId);
+    return rows
+        .map((r) => DisputeMessageModel.fromMap(r, currentUserId: owner))
+        .toList();
   }
 
-  /// رسالة نزاع — RPC `add_dispute_message` (تصحيح الاسم الشبح command_*).
-  /// أونلاين فقط في v1 (خطة 02 §2.1)؛ الفشل يُرمى برسالته الحقيقية ولا يُبتلع.
+  /// يحفظ الرسالة وطلب إرسالها ذرياً قبل تشغيل المزامنة الخلفية.
   Future<bool> addDisputeMessage(String disputeId, String message) async {
-    try {
-      final client = Supabase.instance.client;
-      await client.rpc(
-        RpcContract.addDisputeMessage,
-        params: {'p_dispute_id': disputeId, 'p_message': message.trim()},
-      );
-      return true;
-    } catch (e) {
-      throw MerchantApiException.from(e);
+    final text = message.trim();
+    if (text.isEmpty || text.length > 2000) {
+      throw const FormatException('رسالة الاعتراض غير صالحة');
     }
+    final accountId = AppDatabase.instance.accountId;
+    if (accountId == null) {
+      throw const MerchantApiException(
+        code: 'unauthenticated',
+        message: 'سجل الدخول لإرسال الرسالة.',
+      );
+    }
+    final requestId = _uuid.v4();
+    final now = DateTime.now().toUtc().toIso8601String();
+    final db = await AppDatabase.instance.database;
+    await db.transaction((txn) async {
+      final savedDecision = await txn.query(
+        'offline_mutations_queue',
+        columns: ['id'],
+        where: "command_type='resolve_dispute' AND local_ref_id=?",
+        whereArgs: [disputeId],
+        limit: 1,
+      );
+      if (savedDecision.isNotEmpty) {
+        throw StateError(
+          'يوجد قرار محفوظ لهذا الاعتراض. راجع نتيجة إرساله قبل إضافة رد.',
+        );
+      }
+      final cached = await txn.query(
+        'local_disputes',
+        where: 'id=?',
+        whereArgs: [disputeId],
+        limit: 1,
+      );
+      if (cached.isEmpty || !DisputeModel.fromMap(cached.single).isOpen) {
+        throw StateError('هذا الاعتراض مغلق أو غير متاح للرد.');
+      }
+      await txn.insert('local_dispute_messages', {
+        'id': 'message-$requestId',
+        'dispute_id': disputeId,
+        'sender_user_id': accountId,
+        'sender_workspace': 'merchant',
+        'message': text,
+        'created_at': now,
+        'sync_status': 'pending',
+        'client_request_id': requestId,
+      });
+      await txn.insert('offline_mutations_queue', {
+        'client_request_id': requestId,
+        'command_type': 'add_dispute_message',
+        'payload_json': jsonEncode({
+          'p_dispute_id': disputeId,
+          'p_message': text,
+          'p_client_request_id': requestId,
+          'p_sender_workspace': 'merchant',
+        }),
+        'local_ref_id': 'message-$requestId',
+        'status': 'pending',
+        'attempt_count': 0,
+        'created_at': now,
+      });
+    });
+    _requestSync();
+    return true;
   }
 
   /// حل نزاع — RPC `resolve_dispute` مع `p_resolution_note`
@@ -904,94 +1064,94 @@ class MerchantRepository {
     required String note,
     double? correctedAmount,
   }) async {
-    try {
-      final client = Supabase.instance.client;
-      await client.rpc(
-        RpcContract.resolveDispute,
-        params: {
+    if (!{'accepted', 'partially_accepted', 'rejected'}.contains(resolution) ||
+        note.trim().isEmpty ||
+        note.trim().length > 4000) {
+      throw const FormatException('حدد القرار واكتب سببًا واضحًا.');
+    }
+    final db = await AppDatabase.instance.database;
+    await db.transaction((tx) async {
+      final disputes = await tx.query(
+        'local_disputes',
+        where: 'id=?',
+        whereArgs: [disputeId],
+        limit: 1,
+      );
+      if (disputes.isEmpty || !DisputeModel.fromMap(disputes.single).isOpen) {
+        throw StateError('هذا الاعتراض غير متاح للمعالجة. حدّث بيانات الحساب.');
+      }
+      final entries = await tx.query(
+        'local_ledger_entries',
+        columns: ['amount'],
+        where: 'id=?',
+        whereArgs: [disputes.single['entry_id']],
+        limit: 1,
+      );
+      final amount = entries.isEmpty
+          ? null
+          : (entries.single['amount'] as num).toDouble();
+      if (resolution == 'partially_accepted' &&
+          (amount == null ||
+              correctedAmount == null ||
+              correctedAmount <= 0 ||
+              correctedAmount >= amount)) {
+        throw const FormatException(
+          'المبلغ المصحح يجب أن يكون أكبر من صفر وأقل من مبلغ العملية.',
+        );
+      }
+      if (resolution != 'partially_accepted' && correctedAmount != null) {
+        throw const FormatException(
+          'التصحيح المالي متاح مع القبول الجزئي فقط.',
+        );
+      }
+      final pending = await tx.query(
+        'offline_mutations_queue',
+        where: "command_type='resolve_dispute' AND local_ref_id=?",
+        whereArgs: [disputeId],
+        limit: 1,
+      );
+      if (pending.isNotEmpty) {
+        throw StateError(
+          'يوجد قرار محفوظ لهذا الاعتراض. راجع نتيجة إرساله أولًا.',
+        );
+      }
+      final request = _uuid.v4();
+      await tx.insert('offline_mutations_queue', {
+        'client_request_id': request,
+        'command_type': 'resolve_dispute',
+        'payload_json': jsonEncode({
           'p_dispute_id': disputeId,
           'p_resolution': resolution,
           'p_resolution_note': note.trim(),
           'p_corrected_amount': correctedAmount,
-        },
-      );
-      return true;
-    } catch (e) {
-      throw MerchantApiException.from(e);
-    }
+          'p_client_request_id': request,
+        }),
+        'local_ref_id': disputeId,
+        'status': 'pending',
+        'attempt_count': 0,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+      });
+    });
+    _requestSync();
+    return true;
   }
 
-  // ==================== عمليات فريق العمل (Team) ====================
-
-  /// قائمة الفريق بالأعمدة الفعلية (خطة 06 خطوة 3.5):
-  /// `role, status` (وليس member_role/permissions/is_active الشبحية)،
-  /// وبلا تضمين profiles. عرض الأسماء الكاملة ينتظر View خلفية (اعتمادية B-1).
-  Future<List<MemberModel>> getMembers(String businessId) async {
-    try {
-      final client = Supabase.instance.client;
-      final res = await client
-          .from('business_members')
-          .select('id, business_id, user_id, role, status, created_at')
-          .eq('business_id', businessId)
-          .order('created_at', ascending: true);
-
-      return (res as List).map((row) => MemberModel.fromMap(row)).toList();
-    } catch (e) {
-      if (MerchantApiException.isNetworkError(e)) return const [];
-      throw MerchantApiException.from(e);
-    }
+  Future<bool> hasPendingDisputeResolution(String disputeId) async {
+    return await getDisputeResolutionQueue(disputeId) != null;
   }
 
-  Future<List<MemberInviteModel>> getMemberInvites(String businessId) async {
-    try {
-      final client = Supabase.instance.client;
-      final res = await client
-          .from('business_member_invites')
-          .select()
-          .eq('business_id', businessId)
-          .order('created_at', ascending: false);
-
-      return (res as List)
-          .map((row) => MemberInviteModel.fromMap(row))
-          .toList();
-    } catch (e) {
-      if (MerchantApiException.isNetworkError(e)) return const [];
-      throw MerchantApiException.from(e);
-    }
-  }
-
-  /// دعوة عضو بالهاتف. يحل الخادم الهاتف إلى مستخدم مسجل من دون كشف أي
-  /// بيانات تعريفية، ثم ينفذ RPC الدعوة بصلاحيات المستخدم الحالي.
-  Future<bool> inviteMember({
-    required String businessId,
-    String? targetUserId,
-    String? phone,
-    required String role,
-  }) async {
-    final normalizedPhone = phone?.trim() ?? '';
-    final target = targetUserId?.trim() ?? '';
-    if (normalizedPhone.isEmpty && !_uuidRegex.hasMatch(target)) {
-      throw const MerchantApiException(
-        code: 'invalid_invitee',
-        message: 'أدخل رقم هاتف الموظف بصيغة صحيحة أو معرّف مستخدم صالح.',
-      );
-    }
-
-    try {
-      final client = Supabase.instance.client;
-      await client.functions.invoke(
-        RpcContract.edgeMemberInvite,
-        body: {
-          'businessId': businessId,
-          'role': role,
-          if (normalizedPhone.isNotEmpty) 'phone': normalizedPhone,
-          if (normalizedPhone.isEmpty) 'targetUserId': target,
-        },
-      );
-      return true;
-    } catch (e) {
-      throw MerchantApiException.from(e);
-    }
+  Future<Map<String, dynamic>?> getDisputeResolutionQueue(
+    String disputeId,
+  ) async {
+    final db = await AppDatabase.instance.database;
+    final rows = await db.query(
+      'offline_mutations_queue',
+      columns: ['status', 'payload_json', 'last_error'],
+      where: "command_type='resolve_dispute' AND local_ref_id=?",
+      whereArgs: [disputeId],
+      limit: 1,
+    );
+    return rows.firstOrNull;
   }
 
   // ==================== كشوفات الحساب المجمعة (Statements) ====================
@@ -1016,59 +1176,60 @@ class MerchantRepository {
     required String periodTo,
     required List<String> currencyCodes,
   }) async {
-    try {
-      final codes = currencyCodes
-          .map((code) => code.trim().toUpperCase())
-          .where((code) => code.length == 3)
-          .toSet()
-          .toList();
-      if (codes.isEmpty) return null;
-
-      final statements = <StatementModel>[];
-      for (final code in codes) {
-        final statement = await generateCustomerStatement(
+    final codes = currencyCodes
+        .map((c) => c.trim().toUpperCase())
+        .toSet()
+        .toList();
+    if (codes.isEmpty || codes.any((c) => !RegExp(r'^[A-Z]{3}$').hasMatch(c))) {
+      throw const FormatException('حدد عملة صالحة للكشف.');
+    }
+    final statements = <StatementModel>[];
+    for (final code in codes) {
+      statements.add(
+        await _generateLocalStatement(
           businessCustomerId: businessCustomerId,
           periodFrom: periodFrom,
           periodTo: periodTo,
           currencyCode: code,
-        );
-        if (statement != null) statements.add(statement);
-      }
-      if (statements.isEmpty) return null;
-      if (statements.length == 1) return statements.first;
-      // عند غياب الشبكة تكون التقارير المحلية قد أُنشئت وطُلب توثيقها في
-      // الطابور. لا نحاول جمع معرّفاتها المحلية على الخادم.
-      if (statements.any((item) => item.downloadUrl == null)) {
-        return statements.first;
-      }
-
-      final response = await Supabase.instance.client.functions.invoke(
-        'combine-statements',
-        body: {'statementIds': statements.map((item) => item.id).toList()},
+        ),
       );
-      final data = response.data is Map
-          ? Map<String, dynamic>.from(response.data as Map)
-          : <String, dynamic>{};
-      final rawUrl = data['signedUrl']?.toString();
-      if (rawUrl == null || rawUrl.isEmpty) {
+    }
+    return statements.first.copyWith(
+      combinedStatements: statements.length > 1 ? statements : const [],
+    );
+  }
+
+  /// A combined PDF must contain exactly one downloadable statement per currency.
+  static List<StatementModel> requireCompleteStatements(
+    List<String> currencyCodes,
+    List<StatementModel?> results,
+  ) {
+    if (currencyCodes.length != results.length ||
+        results.any((statement) => statement == null)) {
+      throw const MerchantApiException(
+        code: 'incomplete_currency_statement',
+        message: 'تعذر إنشاء كشف كامل لكل العملات. حاول مرة أخرى.',
+      );
+    }
+    final statements = results.cast<StatementModel>();
+    for (var index = 0; index < currencyCodes.length; index++) {
+      if (statements[index].currencyCode.toUpperCase() !=
+          currencyCodes[index].toUpperCase()) {
         throw const MerchantApiException(
-          code: 'pdf_combination_failed',
-          message: 'تعذر جمع تقارير العملات في ملف واحد.',
+          code: 'statement_currency_mismatch',
+          message: 'لم تتطابق عملات الكشف المطلوب. حاول مرة أخرى.',
         );
       }
-      final signedUri = Uri.parse(rawUrl);
-      final apiUri = Uri.parse(SupabaseConfig.effectiveUrl);
-      final publicUrl = signedUri
-          .replace(
-            scheme: apiUri.scheme,
-            host: apiUri.host,
-            port: apiUri.hasPort ? apiUri.port : null,
-          )
-          .toString();
-      return statements.first.copyWith(downloadUrl: publicUrl);
-    } catch (e) {
-      throw MerchantApiException.from(e);
     }
+    if (statements.length > 1 &&
+        statements.any((statement) => statement.downloadUrl == null)) {
+      throw const MerchantApiException(
+        code: 'combined_statement_requires_connection',
+        message:
+            'يتطلب جمع كشف كل العملات اتصالًا بالإنترنت. أنشئ كشف كل عملة على حدة عند العمل دون اتصال.',
+      );
+    }
+    return statements;
   }
 
   /// توليد كشف — RPC `create_statement` مع `p_scope='business_customer'`
@@ -1080,61 +1241,12 @@ class MerchantRepository {
     required String periodTo,
     String? currencyCode,
   }) async {
-    try {
-      final client = Supabase.instance.client;
-      final res = await client.rpc(
-        RpcContract.createStatement,
-        params: {
-          'p_scope': 'business_customer',
-          'p_business_customer_id': businessCustomerId,
-          'p_period_from': periodFrom,
-          'p_period_to': periodTo,
-          'p_currency_code': currencyCode?.toUpperCase(),
-        },
-      );
-
-      final pdfResponse = await client.functions.invoke(
-        'generate-statement',
-        body: {'statementId': res},
-      );
-      final pdfData = pdfResponse.data is Map
-          ? Map<String, dynamic>.from(pdfResponse.data as Map)
-          : <String, dynamic>{};
-      if (pdfData['signedUrl'] == null) {
-        throw const MerchantApiException(
-          code: 'pdf_generation_failed',
-          message: 'تعذر إنشاء ملف PDF. حاول مرة أخرى.',
-        );
-      }
-      final refreshedStatement = await client
-          .from('statements')
-          .select()
-          .eq('id', res)
-          .single();
-      final signedUri = Uri.parse(pdfData['signedUrl'].toString());
-      final apiUri = Uri.parse(SupabaseConfig.effectiveUrl);
-      final publicDownloadUrl = signedUri
-          .replace(
-            scheme: apiUri.scheme,
-            host: apiUri.host,
-            port: apiUri.hasPort ? apiUri.port : null,
-          )
-          .toString();
-      return StatementModel.fromMap(
-        refreshedStatement,
-        downloadUrl: publicDownloadUrl,
-      );
-    } catch (e) {
-      if (MerchantApiException.isNetworkError(e)) {
-        return _generateLocalStatement(
-          businessCustomerId: businessCustomerId,
-          periodFrom: periodFrom,
-          periodTo: periodTo,
-          currencyCode: currencyCode,
-        );
-      }
-      throw MerchantApiException.from(e);
-    }
+    return _generateLocalStatement(
+      businessCustomerId: businessCustomerId,
+      periodFrom: periodFrom,
+      periodTo: periodTo,
+      currencyCode: currencyCode,
+    );
   }
 
   /// يبني ملخص الكشف من دفتر SQLite فوراً، ثم يضع طلب إنشاء PDF الموثق
@@ -1153,23 +1265,12 @@ class MerchantRepository {
       currencyCode: code,
     );
 
-    double opening = 0;
-    double debits = 0;
-    double credits = 0;
-    for (final row in rows) {
-      final entry = LedgerEntryModel.fromMap(row);
-      if (entry.isReversed) continue;
-      final occurredAt = DateTime.tryParse(entry.occurredAt);
-      if (occurredAt == null || occurredAt.isAfter(to)) continue;
-      final signed = entry.direction == 'credit' ? -entry.amount : entry.amount;
-      if (occurredAt.isBefore(from)) {
-        opening += signed;
-      } else if (entry.direction == 'credit') {
-        credits += entry.amount;
-      } else {
-        debits += entry.amount;
-      }
-    }
+    final totals = LocalStatementTotals.calculate(
+      entries: rows.map(LedgerEntryModel.fromMap),
+      from: from,
+      to: to,
+      currencyCode: code,
+    );
 
     final localId = 'statement-local-${_uuid.v4()}';
     await AppDatabase.instance.enqueueMutation(
@@ -1182,7 +1283,7 @@ class MerchantRepository {
         'currencyCode': code,
       },
     );
-    SyncEngine.instance.triggerSync();
+    _requestSync();
 
     return StatementModel(
       id: localId,
@@ -1191,12 +1292,19 @@ class MerchantRepository {
       periodFrom: periodFrom,
       periodTo: periodTo,
       currencyCode: code,
-      openingBalance: opening,
-      totalDebits: debits,
-      totalCredits: credits,
-      closingBalance: opening + debits - credits,
+      openingBalance: totals.opening.toDouble(),
+      totalDebits: totals.debits.toDouble(),
+      totalCredits: totals.credits.toDouble(),
+      closingBalance: totals.closing.toDouble(),
       verificationCode: 'LOCAL-PENDING',
       createdAt: DateTime.now().toIso8601String(),
+      localEntries: rows
+          .where((r) {
+            final date = DateTime.parse(r['occurred_at'] as String);
+            return !date.isBefore(from) && date.isBefore(to);
+          })
+          .map((r) => Map<String, dynamic>.from(r))
+          .toList(),
     );
   }
 }

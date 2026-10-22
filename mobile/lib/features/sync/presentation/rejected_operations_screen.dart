@@ -116,6 +116,8 @@ class _RejectedOperationCard extends StatelessWidget {
     final currency = payload['p_currency_code'] ?? payload['currencyCode'];
     final error = operation['last_error'] as String? ?? 'رفض الخادم العملية';
     final code = operation['last_error_code'] as String?;
+    final name = operation['customer_name'] as String?;
+    final dependents = operation['dependent_count'] as num? ?? 0;
     return Card(
       color: AppColors.errorLight,
       child: Padding(
@@ -138,7 +140,13 @@ class _RejectedOperationCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
+            if (name != null)
+              Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
             Text(error, maxLines: 4, overflow: TextOverflow.ellipsis),
+            if (dependents > 0)
+              Text(
+                '$dependents عمليات تابعة محفوظة محليًا تنتظر نجاح هذه العملية.',
+              ),
             if (code != null) ...[
               const SizedBox(height: 4),
               Text(
@@ -158,7 +166,11 @@ class _RejectedOperationCard extends StatelessWidget {
                 FilledButton.icon(
                   onPressed: () => onRetry(requestId),
                   icon: const Icon(AppIcons.sync),
-                  label: const Text('إعادة المحاولة'),
+                  label: Text(
+                    code == 'dependency_failed'
+                        ? 'إعادة محاولة العملية الأصلية'
+                        : 'إعادة المحاولة',
+                  ),
                 ),
               ],
             ),
@@ -200,6 +212,7 @@ class _RejectedOperationCard extends StatelessWidget {
   }
 
   static String _label(String command) => switch (command) {
+    'mutate_customer_profile' => 'تعديل بيانات العميل أو أرشفته',
     'create_ledger_entry' => 'قيد مالي مرفوض',
     'apply_customer_discount' => 'خصم مرفوض',
     'reverse_ledger_entry' => 'عكس قيد مرفوض',

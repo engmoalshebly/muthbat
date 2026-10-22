@@ -1,4 +1,4 @@
-import type { User } from "npm:@supabase/supabase-js@2";
+import type { User } from "npm:@supabase/supabase-js@2.112.3";
 import { authenticatedClient } from "./supabase.ts";
 
 export type AuthenticatedRequest = {
@@ -17,8 +17,8 @@ export async function requireUser(request: Request): Promise<AuthenticatedReques
   return { user: data.user, accessToken, client };
 }
 
-export function requireWorkerSecret(request: Request): void {
-  const expected = Deno.env.get("WORKER_SECRET");
+export function requireWorkerSecret(request: Request, secretName = "WORKER_SECRET"): void {
+  const expected = Deno.env.get(secretName);
   if (!expected || request.headers.get("x-worker-secret") !== expected) {
     throw new Error("unauthorized_worker");
   }

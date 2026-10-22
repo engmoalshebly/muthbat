@@ -82,6 +82,12 @@ verify_jwt = true
 [functions.staging-direct-signup]
 verify_jwt = false
 
+[functions.phone-password-signup]
+verify_jwt = false
+
+[functions.local-notebook-import]
+verify_jwt = true
+
 [functions.customer-directory]
 verify_jwt = true
 
@@ -107,10 +113,13 @@ verify_jwt = false
 verify_jwt = false
 
 # Worker functions: JWT verified + requireWorkerSecret() in the handler.
-# Anonymous callers get 401 from Supabase Gateway; callers without WORKER_SECRET
-# get 401 from the function body. Double-gated security.
+# Scheduled workers authenticate the dedicated NOTIFICATION_WORKER_SECRET.
+# They do not accept user JWTs as authorization.
 [functions.process-notification-outbox]
-verify_jwt = true
+verify_jwt = false
 
 [functions.process-automation-rules]
+verify_jwt = false
+
+[functions.customer-contacts]
 verify_jwt = true

@@ -1,3 +1,6 @@
+import '../../../auth/presentation/sign_out_flow.dart';
+import 'dart:ui' as ui;
+import '../../../notifications/notifications_screen.dart';
 import 'package:muthbat/shared/widgets/top_notice.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -7,14 +10,20 @@ import '../../../../app/router/app_routes.dart';
 import '../../../../app/theme/app_colors.dart';
 import '../../../../app/theme/app_icons.dart';
 import '../../../../app/theme/app_typography.dart';
-import '../../../../shared/widgets/brand_logo.dart';
-import '../../../../shared/widgets/sync_status_banner.dart';
+import '../../../auth/presentation/widgets/workspace_switcher.dart';
+import '../../../../shared/widgets/muthbat_bottom_nav.dart';
 import '../../../../core/finance/currency_info.dart';
+import '../../../../core/sync/sync_engine.dart';
+import '../../../../core/config/env.dart';
 import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../../data/models/customer_summary_model.dart';
 import '../controllers/customer_controller.dart';
 import 'customer_account_ledger_screen.dart';
 import 'customer_balance_overview.dart';
+import '../widgets/customer_offline_coverage.dart';
+import '../widgets/customer_dispute_button.dart';
+import 'customer_entry_details_screen.dart';
+import 'customer_disputes_screen.dart';
 
 /// شاشة العميل الرئيسية — بيانات حقيقية من الخادم (customer_business_summary /
 /// customer_link_requests / ledger_timeline) بلا أي أرقام وهمية.
@@ -25,17 +34,45 @@ class CustomerHomeScreen extends ConsumerStatefulWidget {
   ConsumerState<CustomerHomeScreen> createState() => _CustomerHomeScreenState();
 }
 
-class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
+class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen>
+    with WidgetsBindingObserver {
   final currencyFormatter = NumberFormat('#,##0.##');
   final Set<String> _busyActions = {};
   String _businessSearch = '';
+  int _selectedTab = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(customerControllerProvider.notifier).load();
+      _prepareAndLoadCustomerWorkspace();
     });
+  }
+
+  Future<void> _prepareAndLoadCustomerWorkspace() async {
+    try {
+      await ref
+          .read(authControllerProvider.notifier)
+          .prepareCustomerWorkspace();
+    } catch (error) {
+      debugPrint('[CustomerHomeScreen] workspace preparation failed: ');
+    }
+    if (!mounted) return;
+    await ref.read(customerControllerProvider.notifier).load(force: true);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      ref.read(customerControllerProvider.notifier).refreshIfIdle();
+    }
   }
 
   String _currencySymbol(String code) => CurrencyCatalog.forCode(code).symbol;
@@ -84,141 +121,43 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
     }
   }
 
-  Future<void> _confirmEntry(CustomerPendingEntry entry) async {
+  Future<void> _openDispute(CustomerPendingEntry entry) async {
     if (_busyActions.contains(entry.id)) return;
     setState(() => _busyActions.add(entry.id));
-
-    final success = await ref
-        .read(customerControllerProvider.notifier)
-        .confirmEntry(entry.id);
-
-    if (mounted) {
-      setState(() => _busyActions.remove(entry.id));
-      final error = ref.read(customerControllerProvider).errorMessage;
-      TopNotice.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            success
-                ? 'حُفظ طلب التأكيد. يظهر التأكيد النهائي بعد قبول الخادم.'
-                : (error ??
-                      'تعذر تأكيد العملية — تحقق من اتصالك وحاول مرة أخرى'),
-          ),
-          backgroundColor: success ? AppColors.success : AppColors.error,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-      if (success || error != null) {
-        ref.read(customerControllerProvider.notifier).clearError();
-      }
-    }
-  }
-
-  Future<void> _openDispute(CustomerPendingEntry entry) async {
-    String reason = 'wrong_amount';
-    final descriptionController = TextEditingController();
-    final submitted = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('تقديم اعتراض'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'لن تُحذف العملية. سيصل الاعتراض إلى المحل لمراجعته.',
-                ),
-                const SizedBox(height: 16),
-                DropdownButtonFormField<String>(
-                  initialValue: reason,
-                  decoration: const InputDecoration(labelText: 'سبب الاعتراض'),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'wrong_amount',
-                      child: Text('المبلغ غير صحيح'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'unknown_transaction',
-                      child: Text('لم أقم بهذه العملية'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'duplicate',
-                      child: Text('العملية مكررة'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'already_paid',
-                      child: Text('دفعت هذا المبلغ مسبقاً'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'wrong_date',
-                      child: Text('التاريخ غير صحيح'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'wrong_description',
-                      child: Text('الوصف غير صحيح'),
-                    ),
-                    DropdownMenuItem(value: 'other', child: Text('سبب آخر')),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) setDialogState(() => reason = value);
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: descriptionController,
-                  minLines: 2,
-                  maxLines: 4,
-                  decoration: const InputDecoration(
-                    labelText: 'التوضيح *',
-                    hintText: 'اكتب ما الذي يحتاج إلى تصحيح',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (descriptionController.text.trim().isEmpty) return;
-                Navigator.pop(dialogContext, true);
-              },
-              child: const Text('إرسال الاعتراض'),
-            ),
-          ],
-        ),
-      ),
+    await presentCustomerDispute(
+      context,
+      ref,
+      entryId: entry.id,
+      ownerId: ref.read(authControllerProvider).userId,
+      entry: entry.toMap(),
     );
-    if (submitted != true || !mounted) return;
-    setState(() => _busyActions.add(entry.id));
-    final success = await ref
-        .read(customerControllerProvider.notifier)
-        .openDispute(
-          entryId: entry.id,
-          reason: reason,
-          description: descriptionController.text,
-        );
     if (!mounted) return;
     setState(() => _busyActions.remove(entry.id));
-    final error = ref.read(customerControllerProvider).errorMessage;
-    TopNotice.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          success
-              ? 'حُفظ اعتراضك. راجع حالة الإرسال لمعرفة وصوله إلى المحل.'
-              : (error ?? 'تعذر إرسال الاعتراض'),
-        ),
-        backgroundColor: success ? AppColors.success : AppColors.error,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-    ref.read(customerControllerProvider.notifier).clearError();
+    await ref.read(customerControllerProvider.notifier).restoreLocal();
   }
 
-  /// يفتح قائمة القيود المعلقة بانتظار تأكيد العميل (بدل SnackBar الوهمي)
+  void _openEntry(CustomerPendingEntry entry) {
+    final state = ref.read(customerControllerProvider);
+    final owner = ref.read(authControllerProvider).userId;
+    final summary = state.summaries
+        .where(
+          (s) =>
+              s.businessCustomerId == entry.businessCustomerId &&
+              s.currencyCode == entry.currencyCode,
+        )
+        .firstOrNull;
+    Navigator.of(context).push(
+      AppRoutes.accountPage(
+        builder: (_) => CustomerEntryDetailsScreen(
+          businessName: summary?.businessName ?? 'المحل',
+          entry: {...entry.toMap(), 'dispute_status': 'none'},
+          ownerId: owner,
+        ),
+      ),
+    );
+  }
+
+  /// يعرض العمليات المسجلة دون انتظار موافقة العميل.
   void _openPendingEntriesSheet(
     CustomerHomeState state, {
     String? businessCustomerId,
@@ -232,7 +171,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
+      backgroundColor: AppColors.transparent,
       builder: (ctx) {
         return Container(
           constraints: BoxConstraints(
@@ -240,7 +179,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
           ),
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
           decoration: const BoxDecoration(
-            color: Colors.white,
+            color: AppColors.white,
             borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
           ),
           child: Column(
@@ -259,13 +198,13 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
               ),
               const SizedBox(height: 14),
               Text(
-                'عمليات بانتظار تأكيدك',
+                'عمليات مسجلة في حسابك',
                 style: AppTypography.titleMedium(color: AppColors.textPrimary),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 4),
               Text(
-                'راجع كل عملية سجلها المحل ثم أكّدها لتوثيقها رسمياً',
+                'تُحتسب العمليات مباشرة في رصيدك. يمكنك الاعتراض عند الحاجة من تفاصيل العملية.',
                 style: AppTypography.caption(color: AppColors.textSecondary),
                 textAlign: TextAlign.center,
               ),
@@ -282,7 +221,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        'لا توجد عمليات بانتظار التأكيد',
+                        'لا توجد عمليات جديدة',
                         style: AppTypography.titleSmall(
                           color: AppColors.textPrimary,
                         ),
@@ -367,16 +306,16 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
                                       ElevatedButton(
                                         onPressed: () {
                                           Navigator.pop(ctx);
-                                          _confirmEntry(entry);
+                                          _openEntry(entry);
                                         },
                                         style: ElevatedButton.styleFrom(
                                           backgroundColor:
                                               AppColors.paymentGreen,
-                                          foregroundColor: Colors.white,
+                                          foregroundColor: AppColors.white,
                                           visualDensity: VisualDensity.compact,
                                         ),
                                         child: const Text(
-                                          'تأكيد',
+                                          'تفاصيل',
                                           style: TextStyle(fontSize: 12),
                                         ),
                                       ),
@@ -413,194 +352,305 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
   Widget build(BuildContext context) {
     final authState = ref.watch(authControllerProvider);
     final state = ref.watch(customerControllerProvider);
-    final userName = authState.displayName ?? 'العميل';
+    final userName = authState.displayName?.trim().isNotEmpty == true
+        ? authState.displayName!.trim()
+        : 'حساب العميل';
 
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        backgroundColor: AppColors.surfaceLight,
+        toolbarHeight: 84,
+        backgroundColor: AppColors.backgroundLight,
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
-        title: Row(
+        titleSpacing: 16,
+        title: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const BrandLogo.icon(width: 32, height: 32),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'مرحباً بك، $userName',
-                    style: AppTypography.titleSmall(
-                      color: AppColors.textPrimary,
-                    ),
+            Row(
+              children: [
+                WorkspaceSwitcherButton(
+                  currentKind: 'customer',
+                  name: userName,
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'أهلًا، $userName',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTypography.titleSmall(
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      Text(
+                        'حساباتك في مكان واحد',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTypography.caption(
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                    ],
                   ),
-                  Text(
-                    'حساب الزبون • بقالاتي ومديونياتي',
-                    style: AppTypography.caption(
-                      color: AppColors.textSecondary,
-                    ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!EnvConfig.phoneVerificationEnabled ||
+                    state.phoneLinkError != null)
+                  _headerMetaChip(
+                    icon: Icons.phone_android_outlined,
+                    label: state.phoneLinkError != null
+                        ? 'تعذر التحقق'
+                        : 'التحقق مؤجل',
+                    color: state.phoneLinkError != null
+                        ? AppColors.error
+                        : AppColors.warningStrong,
+                    onTap: () => _showAccountStatusDetails(state, null),
                   ),
-                ],
-              ),
+                if (!EnvConfig.phoneVerificationEnabled ||
+                    state.phoneLinkError != null)
+                  const SizedBox(width: 5),
+                _headerMetaChip(
+                  icon: Icons.schedule_rounded,
+                  label: state.updatedAt == null
+                      ? 'لم يحدّث'
+                      : 'تحديث ${DateFormat('HH:mm').format(DateTime.parse(state.updatedAt!).toLocal())}',
+                  color: AppColors.textMuted,
+                  onTap: () => _showAccountStatusDetails(state, null),
+                ),
+              ],
             ),
           ],
         ),
         actions: [
-          IconButton(
-            tooltip: 'الانتقال إلى وضع التاجر',
-            icon: const Icon(Icons.storefront_outlined),
-            onPressed: () => Navigator.pushNamed(
-              context,
-              authState.requiresBusinessSetup
-                  ? AppRoutes.businessSetup
-                  : AppRoutes.merchantHome,
-            ),
-          ),
-          IconButton(
-            tooltip: 'قفل التطبيق والبصمة',
-            icon: const Icon(
-              Icons.phonelink_lock_rounded,
-              color: AppColors.textSecondary,
-            ),
-            onPressed: () =>
-                Navigator.pushNamed(context, AppRoutes.appLockSettings),
-          ),
-          IconButton(
-            tooltip: 'تسجيل الخروج',
-            icon: const Icon(
-              Icons.logout_rounded,
-              color: AppColors.textSecondary,
-            ),
-            onPressed: () async {
-              final result = await ref
-                  .read(authControllerProvider.notifier)
-                  .signOut();
-              if (context.mounted && result.signedOut) {
-                Navigator.pushNamedAndRemoveUntil(
-                  context,
-                  AppRoutes.login,
-                  (r) => false,
-                );
+          const NotificationBell(workspace: 'customer'),
+          PopupMenuButton<String>(
+            tooltip: 'إعدادات الحساب',
+            icon: const Icon(Icons.more_vert_rounded),
+            onSelected: (value) {
+              if (value == 'workspaces') {
+                Navigator.pushNamed(context, AppRoutes.workspaces);
+              }
+              if (value == 'lock') {
+                Navigator.pushNamed(context, AppRoutes.appLockSettings);
+              }
+              if (value == 'logout') {
+                confirmAccountSignOut(context, ref);
               }
             },
+            itemBuilder: (_) => [
+              const PopupMenuItem(
+                value: 'workspaces',
+                child: Text('مساحات العمل'),
+              ),
+              PopupMenuItem(
+                value: 'lock',
+                child: ListTile(
+                  leading: Icon(Icons.phonelink_lock_outlined),
+                  title: Text('قفل التطبيق'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'logout',
+                child: ListTile(
+                  leading: Icon(Icons.logout_rounded),
+                  title: Text('تسجيل الخروج'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
           ),
         ],
       ),
       body: Column(
         children: [
-          const SyncStatusBanner(),
-          if (state.outbox.isNotEmpty)
-            SizedBox(
-              height: 138,
-              child: ListView(
-                children: [
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16),
-                    child: Text(
-                      'طلبات الزبون المحفوظة: لا تعد مكتملة حتى يقبلها الخادم',
-                    ),
-                  ),
-                  ...state.outbox.map(
-                    (action) => ListTile(
-                      dense: true,
-                      leading: Icon(
-                        action['status'] == 'failed'
-                            ? Icons.error_outline
-                            : Icons.schedule,
-                      ),
-                      title: Text(
-                        action['status'] == 'failed'
-                            ? 'تعذر تنفيذ الطلب'
-                            : 'بانتظار الإرسال أو تأكيد النتيجة',
-                      ),
-                      subtitle: Text(
-                        action['error'] as String? ??
-                            'يعاد الإرسال تلقائيًا عند فتح التطبيق وتوفر جلسة صالحة. إذا استمر الانتظار، تحقق من نشر خدمة المزامنة.',
-                      ),
-                      trailing: action['status'] == 'failed'
-                          ? TextButton(
-                              onPressed: () async {
-                                await ref
-                                    .read(customerRepositoryProvider)
-                                    .retryAction(action['id'] as String);
-                                if (mounted) {
-                                  await ref
-                                      .read(customerControllerProvider.notifier)
-                                      .load();
-                                }
-                              },
-                              child: const Text('إعادة المحاولة'),
-                            )
-                          : null,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          TextButton.icon(
-            onPressed: _busyActions.contains('phone-link')
-                ? null
-                : () async {
-                    setState(() => _busyActions.add('phone-link'));
-                    try {
-                      await ref
-                          .read(customerRepositoryProvider)
-                          .refreshPhoneLinks();
-                      if (!mounted) return;
-                      await ref
-                          .read(customerControllerProvider.notifier)
-                          .load();
-                    } catch (e) {
-                      if (context.mounted) {
-                        TopNotice.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              e.toString().replaceFirst('Exception: ', ''),
-                            ),
-                          ),
-                        );
-                      }
-                    } finally {
-                      if (mounted) {
-                        setState(() => _busyActions.remove('phone-link'));
-                      }
-                    }
-                  },
-            icon: const Icon(Icons.link),
-            label: Text(
-              _busyActions.contains('phone-link')
-                  ? 'جارٍ التحقق من الربط…'
-                  : 'البحث عن حساباتي برقمي الموثق',
-            ),
-          ),
-          if (state.updatedAt != null)
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Text(
-                '${state.isCached ? 'نسخة محفوظة — قد تكون قديمة' : 'آخر تحديث'}: ${DateFormat('yyyy/MM/dd HH:mm').format(DateTime.parse(state.updatedAt!).toLocal())}',
-              ),
-            ),
-          if (state.errorMessage != null && state.summaries.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Text(state.errorMessage!),
-            ),
           Expanded(
             child: RefreshIndicator(
               onRefresh: () =>
                   ref.read(customerControllerProvider.notifier).load(),
               color: AppColors.primary,
-              child: _buildBody(state),
+              child: _buildBody(state, authState),
             ),
           ),
+        ],
+      ),
+      bottomNavigationBar: MuthbatBottomNav(
+        currentIndex: _selectedTab,
+        onTap: (index) => setState(() => _selectedTab = index),
+        items: const [
+          MuthbatNavItem(icon: Icons.home_rounded, label: 'الرئيسية'),
+          MuthbatNavItem(icon: Icons.storefront_outlined, label: 'بقالاتي'),
+          MuthbatNavItem(icon: Icons.receipt_long_outlined, label: 'القيود'),
+          MuthbatNavItem(icon: Icons.person_outline_rounded, label: 'حسابي'),
         ],
       ),
     );
   }
 
-  Widget _buildBody(CustomerHomeState state) {
+  Widget _headerMetaChip({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: color.withValues(alpha: .08),
+      borderRadius: BorderRadius.circular(9),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(9),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 12, color: color),
+              const SizedBox(width: 3),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _refreshCustomerAccounts() async {
+    if (_busyActions.contains('phone-link')) return;
+    setState(() => _busyActions.add('phone-link'));
+    try {
+      await ref.read(customerControllerProvider.notifier).load(force: true);
+    } finally {
+      if (mounted) setState(() => _busyActions.remove('phone-link'));
+    }
+  }
+
+  void _showAccountStatusDetails(
+    CustomerHomeState state,
+    SyncProgress? progress,
+  ) {
+    final verificationDeferred = !EnvConfig.phoneVerificationEnabled;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'حالة الحساب',
+                style: AppTypography.titleMedium(color: AppColors.textPrimary),
+              ),
+              const SizedBox(height: 12),
+              if (verificationDeferred)
+                const ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.phone_android_outlined),
+                  title: Text('التحقق من ملكية الهاتف مؤجل'),
+                  subtitle: Text(
+                    'ربط السجلات السابقة بالرقم وحده غير مفعّل حاليًا.',
+                  ),
+                ),
+              if (state.phoneLinkError != null)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(
+                    Icons.warning_amber_rounded,
+                    color: AppColors.warningStrong,
+                  ),
+                  title: const Text('تعذر تحديث ربط الهاتف'),
+                  subtitle: Text(state.phoneLinkError!),
+                  trailing: state.requiresPhoneVerification
+                      ? TextButton(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            Navigator.pushNamed(context, AppRoutes.recovery);
+                          },
+                          child: const Text('استعادة'),
+                        )
+                      : null,
+                ),
+              if (state.outbox.isNotEmpty)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(
+                    Icons.cloud_upload_outlined,
+                    color: AppColors.warningStrong,
+                  ),
+                  title: Text(
+                    '${state.outbox.where((a) => a['status'] == 'pending').length} بانتظار الإرسال • ${state.outbox.where((a) => a['status'] == 'failed').length} تعذّر إرساله',
+                  ),
+                  subtitle: const Text(
+                    'افتح «طلباتي للتاجر» لقراءة الرد أو إعادة الإرسال.',
+                  ),
+                ),
+              if (state.updatedAt != null)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.schedule_rounded),
+                  title: Text(
+                    state.isCached
+                        ? 'بيانات محفوظة على الجهاز'
+                        : 'آخر تحديث للبيانات',
+                  ),
+                  subtitle: Text(
+                    DateFormat(
+                      'yyyy/MM/dd  HH:mm',
+                    ).format(DateTime.parse(state.updatedAt!).toLocal()),
+                  ),
+                ),
+              if (progress?.state == SyncState.error &&
+                  progress?.lastMessage != null)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(
+                    Icons.sync_problem_rounded,
+                    color: AppColors.error,
+                  ),
+                  title: const Text('تعذرت المزامنة'),
+                  subtitle: Text(progress!.lastMessage!),
+                ),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _refreshCustomerAccounts();
+                },
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('تحديث حساباتي المرتبطة'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBody(CustomerHomeState state, AuthState authState) {
     // 1. التحميل الأول
     if (state.isLoading &&
         state.summaries.isEmpty &&
@@ -616,6 +666,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(32),
         children: [
+          const SizedBox(height: 20),
           const SizedBox(height: 60),
           const Icon(AppIcons.offline, size: 54, color: AppColors.error),
           const SizedBox(height: 16),
@@ -638,7 +689,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
             label: const Text('إعادة المحاولة'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
+              foregroundColor: AppColors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(14),
               ),
@@ -654,7 +705,56 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(32),
         children: [
+          const SizedBox(height: 20),
           const SizedBox(height: 60),
+          if (state.phoneLinkError != null || state.errorMessage != null) ...[
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.warningLight,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: AppColors.warning.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    state.requiresPhoneVerification
+                        ? 'يلزم التحقق من رقم الهاتف لربط حساباتك'
+                        : 'تعذر تحديث حساباتك المرتبطة',
+                    style: AppTypography.titleSmall(
+                      color: AppColors.textPrimary,
+                    ),
+                    textAlign: TextAlign.right,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    state.phoneLinkError ?? state.errorMessage!,
+                    style: AppTypography.bodySmall(
+                      color: AppColors.textSecondary,
+                    ),
+                    textAlign: TextAlign.right,
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: TextButton.icon(
+                      onPressed: state.isLoading
+                          ? null
+                          : () => ref
+                                .read(customerControllerProvider.notifier)
+                                .load(force: true),
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('إعادة المحاولة'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+          ],
           Icon(
             AppIcons.store,
             size: 54,
@@ -668,7 +768,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'بعد التحقق من رقمك، راجع طلبات البقالات أدناه. تظهر حساباتك بعد قبول الربط؛ القبول لا يعني تأكيد الديون.',
+            'بعد التحقق من رقمك، راجع طلبات البقالات أدناه. تظهر حساباتك بعد قبول الربط؛ الربط يتيح عرض العمليات المسجلة والاعتراض عليها.',
             style: AppTypography.bodySmall(color: AppColors.textSecondary),
             textAlign: TextAlign.center,
           ),
@@ -677,23 +777,546 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
     }
 
     // 4. المحتوى الحقيقي
-    return SingleChildScrollView(
+    return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
+      padding: const EdgeInsets.only(bottom: 24),
+      children: [
+        if (_selectedTab == 0)
           CustomerBalanceOverview(summaries: state.summaries),
-          const SizedBox(height: 20),
-          if (state.linkRequests.isNotEmpty) ...[
-            _buildLinkRequestsSection(state),
-            const SizedBox(height: 24),
-          ],
+        if (state.isCached || state.errorMessage != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Material(
+              color: AppColors.warningLight,
+              borderRadius: BorderRadius.circular(12),
+              child: ListTile(
+                dense: true,
+                leading: const Icon(
+                  Icons.cloud_off_outlined,
+                  size: 20,
+                  color: AppColors.warningStrong,
+                ),
+                title: Text(
+                  state.errorMessage != null
+                      ? 'تعذر التحديث؛ نعرض آخر بيانات محفوظة'
+                      : 'تعرض الآن بيانات محفوظة على الجهاز',
+                  style: AppTypography.caption(color: AppColors.textPrimary),
+                ),
+                trailing: IconButton(
+                  tooltip: 'إعادة المحاولة',
+                  onPressed: state.isLoading ? null : _refreshCustomerAccounts,
+                  icon: const Icon(Icons.refresh_rounded),
+                ),
+              ),
+            ),
+          ),
+        if (_selectedTab == 0) ...[
+          _buildHomeShortcuts(state),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+            child: _accountAction(
+              icon: Icons.forum_outlined,
+              title: 'طلباتي للتاجر',
+              subtitle: 'عرض الرد على مشكلة في عملية',
+              onTap: _openMyDisputes,
+            ),
+          ),
+          if (authState.userId != null)
+            CustomerOfflineCoverage(owner: authState.userId!),
+          if (state.linkRequests.isNotEmpty) _buildLinkRequestsSection(state),
+          _buildHomeBusinesses(state),
+        ] else if (_selectedTab == 1) ...[
+          _buildSectionIntro(
+            icon: Icons.storefront_outlined,
+            title: 'بقالاتي',
+            subtitle: 'حساباتك المرتبطة وكشوف الحركات لكل متجر',
+          ),
           _buildBusinessesSection(state),
-          const SizedBox(height: 32),
+        ] else if (_selectedTab == 2) ...[
+          _buildSectionIntro(
+            icon: Icons.fact_check_outlined,
+            title: 'العمليات المسجلة',
+            subtitle:
+                'العمليات مسجلة مباشرة، ويمكنك الاعتراض من تفاصيل أي عملية',
+          ),
+          _buildPendingEntriesSection(state),
+        ] else ...[
+          _buildAccountSection(authState),
+        ],
+      ],
+    );
+  }
+
+  void _openMyDisputes() => Navigator.of(
+    context,
+  ).push(AppRoutes.accountPage(builder: (_) => const CustomerDisputesScreen()));
+
+  Widget _buildSectionIntro({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppColors.primaryLight,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: AppColors.primary),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: AppTypography.titleMedium(
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: AppTypography.caption(color: AppColors.textSecondary),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
+
+  Widget _buildHomeShortcuts(CustomerHomeState state) {
+    final shops = state.summaries.map((s) => s.businessId).toSet().length;
+    final pending = state.pendingEntries.length;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: _shortcutCard(
+              icon: Icons.storefront_outlined,
+              title: 'بقالاتي',
+              value: '$shops متجر',
+              onTap: () => setState(() => _selectedTab = 1),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _shortcutCard(
+              icon: Icons.fact_check_outlined,
+              title: 'عملياتك',
+              value: '$pending قيد',
+              onTap: () => setState(() => _selectedTab = 2),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _shortcutCard({
+    required IconData icon,
+    required String title,
+    required String value,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: AppColors.white,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.borderLight),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: AppColors.primary),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: AppTypography.caption(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      value,
+                      style: AppTypography.titleSmall(
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_left_rounded,
+                color: AppColors.textMuted,
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHomeBusinesses(CustomerHomeState state) {
+    final summaries = state.summaries.take(2).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'حساباتك المرتبطة',
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+              if (state.summaries.length > 2)
+                TextButton(
+                  onPressed: () => setState(() => _selectedTab = 1),
+                  child: const Text('عرض الكل'),
+                ),
+            ],
+          ),
+        ),
+        if (summaries.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: _emptyPanel(
+              Icons.storefront_outlined,
+              'لا توجد بقالات مرتبطة بعد',
+              'عند ربط حسابك بمتجر سيظهر ملخصه هنا.',
+            ),
+          )
+        else
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              children: [
+                for (final summary in summaries)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _buildBusinessCard(state, summary),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildPendingEntriesSection(CustomerHomeState state) {
+    final entries = state.pendingEntries;
+    if (entries.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 20),
+        child: _emptyPanel(
+          Icons.verified_outlined,
+          'لا توجد عمليات جديدة',
+          'تظهر عمليات التاجر في الكشف مباشرة، ويمكنك الاعتراض عليها لاحقًا.',
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+      child: Column(
+        children: [
+          for (final entry in entries)
+            Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.white,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: AppColors.borderLight),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color:
+                              (entry.direction == 'debit'
+                                      ? AppColors.debtRed
+                                      : AppColors.paymentGreen)
+                                  .withValues(alpha: .1),
+                          borderRadius: BorderRadius.circular(13),
+                        ),
+                        child: Icon(
+                          entry.direction == 'debit'
+                              ? AppIcons.debt
+                              : AppIcons.payment,
+                          color: entry.direction == 'debit'
+                              ? AppColors.debtRed
+                              : AppColors.paymentGreen,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              entry.description.isEmpty
+                                  ? (entry.direction == 'debit'
+                                        ? 'قيد دين'
+                                        : 'دفعة سداد')
+                                  : entry.description,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: AppTypography.titleSmall(
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                            Text(
+                              _relativeTime(entry.occurredAt),
+                              style: AppTypography.caption(
+                                color: AppColors.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Text(
+                        '${currencyFormatter.format(entry.amount)} ${_currencySymbol(entry.currencyCode)}',
+                        style: AppTypography.titleSmall(
+                          color: entry.direction == 'debit'
+                              ? AppColors.debtRed
+                              : AppColors.paymentGreen,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: _busyActions.contains(entry.id)
+                              ? null
+                              : () => _openDispute(entry),
+                          child: const Text('اعتراض'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: _busyActions.contains(entry.id)
+                              ? null
+                              : () => _openEntry(entry),
+                          child: _busyActions.contains(entry.id)
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text('تفاصيل العملية'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAccountSection(AuthState authState) {
+    final name = authState.displayName?.trim().isNotEmpty == true
+        ? authState.displayName!.trim()
+        : 'حساب العميل';
+    final phone = authState.phoneNumber ?? '';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      child: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: AppColors.white,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: AppColors.borderLight),
+            ),
+            child: Column(
+              children: [
+                CircleAvatar(
+                  radius: 30,
+                  backgroundColor: AppColors.primaryLight,
+                  child: const Icon(
+                    Icons.person_rounded,
+                    color: AppColors.primary,
+                    size: 30,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'حساب عميل',
+                  style: TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  name,
+                  style: AppTypography.titleMedium(
+                    color: AppColors.textPrimary,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                if (phone.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    phone,
+                    textDirection: ui.TextDirection.ltr,
+                    style: AppTypography.bodySmall(
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          _accountAction(
+            icon: Icons.forum_outlined,
+            title: 'طلباتي للتاجر',
+            subtitle: 'عرض رد التاجر على مشكلتك',
+            onTap: _openMyDisputes,
+          ),
+          _accountAction(
+            icon: Icons.dashboard_customize_outlined,
+            title: 'مساحات العمل',
+            subtitle: 'التبديل بين حساب العميل والتاجر',
+            onTap: () => Navigator.pushNamed(context, AppRoutes.workspaces),
+          ),
+          _accountAction(
+            icon: Icons.phonelink_lock_outlined,
+            title: 'قفل التطبيق',
+            subtitle: 'إدارة حماية التطبيق',
+            onTap: () =>
+                Navigator.pushNamed(context, AppRoutes.appLockSettings),
+          ),
+          _accountAction(
+            icon: Icons.notifications_active_outlined,
+            title: 'الإشعارات والتنبيهات',
+            subtitle: 'اختيار التنبيهات التي تصلك',
+            onTap: () => Navigator.of(context).push(
+              AppRoutes.accountPage(
+                builder: (_) => const NotificationSettingsScreen(),
+              ),
+            ),
+          ),
+          _accountAction(
+            icon: Icons.lock_reset_rounded,
+            title: 'تغيير كلمة المرور',
+            subtitle: 'تحديث كلمة مرور حسابك',
+            onTap: () => Navigator.pushNamed(context, AppRoutes.resetPassword),
+          ),
+          _accountAction(
+            icon: Icons.logout_rounded,
+            title: 'تسجيل الخروج',
+            subtitle: 'الخروج من الحساب الحالي',
+            destructive: true,
+            onTap: () => confirmAccountSignOut(context, ref),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _accountAction({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+    bool destructive = false,
+  }) => Container(
+    margin: const EdgeInsets.only(bottom: 10),
+    decoration: BoxDecoration(
+      color: AppColors.white,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: AppColors.borderLight),
+    ),
+    child: ListTile(
+      onTap: onTap,
+      leading: Icon(
+        icon,
+        color: destructive ? AppColors.error : AppColors.primary,
+      ),
+      title: Text(
+        title,
+        style: AppTypography.titleSmall(
+          color: destructive ? AppColors.error : AppColors.textPrimary,
+        ),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: AppTypography.caption(color: AppColors.textSecondary),
+      ),
+      trailing: const Icon(Icons.chevron_left_rounded),
+    ),
+  );
+
+  Widget _emptyPanel(IconData icon, String title, String subtitle) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(22),
+    decoration: BoxDecoration(
+      color: AppColors.white,
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: AppColors.borderLight),
+    ),
+    child: Column(
+      children: [
+        Icon(icon, size: 34, color: AppColors.primary),
+        const SizedBox(height: 10),
+        Text(
+          title,
+          style: AppTypography.titleSmall(color: AppColors.textPrimary),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          subtitle,
+          style: AppTypography.caption(color: AppColors.textSecondary),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    ),
+  );
 
   /// طلبات الربط الحقيقية مع زري قبول/رفض
   Widget _buildLinkRequestsSection(CustomerHomeState state) {
@@ -747,7 +1370,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
                               ),
                             ),
                             Text(
-                              'ترغب «${request.businessName}»${request.businessCity != null ? ' (${request.businessCity})' : ''} بربط حسابك لعرض الحركات والديون. قبول الربط لا يعني تأكيد الديون.',
+                              'ترغب «${request.businessName}»${request.businessCity != null ? ' (${request.businessCity})' : ''} بربط حسابك لعرض الحركات والديون. الربط لا يعني الإقرار بصحة العمليات.',
                               style: AppTypography.caption(
                                 color: AppColors.textSecondary,
                               ),
@@ -769,7 +1392,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
                           label: const Text('قبول الربط'),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.paymentGreen,
-                            foregroundColor: Colors.white,
+                            foregroundColor: AppColors.white,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
@@ -842,7 +1465,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
                 hintText: 'ابحث باسم البقالة',
                 prefixIcon: Icon(Icons.search),
                 filled: true,
-                fillColor: Colors.white,
+                fillColor: AppColors.white,
               ),
               onChanged: (value) => setState(() => _businessSearch = value),
             ),
@@ -883,7 +1506,7 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
               children: visible
                   .map(
                     (summary) => Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.only(bottom: 8),
                       child: _buildBusinessCard(state, summary),
                     ),
                   )
@@ -905,133 +1528,135 @@ class _CustomerHomeScreenState extends ConsumerState<CustomerHomeScreen> {
         .where((e) => e.businessCustomerId == summary.businessCustomerId)
         .length;
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.borderLight),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primary.withValues(alpha: 0.03),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
+    final balanceColor = isZero
+        ? AppColors.textPrimary
+        : owedOnCustomer
+        ? AppColors.debtRed
+        : AppColors.paymentGreen;
+    void openLedger() => Navigator.push(
+      context,
+      AppRoutes.accountPage(
+        builder: (_) => CustomerAccountLedgerScreen(summary: summary),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    );
+    return Material(
+      color: AppColors.white,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: openLedger,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              CircleAvatar(
-                backgroundColor: AppColors.primaryLight,
-                radius: 20,
-                child: const Icon(
-                  AppIcons.store,
-                  color: AppColors.primary,
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      summary.businessName,
-                      style: AppTypography.titleSmall(
-                        color: AppColors.textPrimary,
-                      ),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(9),
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryContainer,
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    Text(
-                      summary.businessType ?? 'محل تجاري',
-                      style: AppTypography.caption(
-                        color: AppColors.textSecondary,
-                      ),
+                    child: const Icon(
+                      AppIcons.store,
+                      size: 20,
+                      color: AppColors.primary,
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          summary.businessName,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _relativeTime(summary.lastEntryAt),
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    width: 112,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: AlignmentDirectional.centerEnd,
+                          child: Text(
+                            '\u2066${currencyFormatter.format(balance.abs())}\u2069 ${_currencySymbol(summary.currencyCode)}',
+                            maxLines: 1,
+                            textAlign: TextAlign.end,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                              color: balanceColor,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          isZero
+                              ? 'خالص'
+                              : owedOnCustomer
+                              ? 'عليك'
+                              : 'لك',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const SizedBox(
+                    width: 18,
+                    child: Icon(
+                      Icons.chevron_left_rounded,
+                      size: 18,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ],
               ),
+              if (pendingCount > 0) ...[
+                const Divider(height: 16, color: AppColors.borderLight),
+                Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: TextButton.icon(
+                    onPressed: () => _openPendingEntriesSheet(
+                      state,
+                      businessCustomerId: summary.businessCustomerId,
+                    ),
+                    icon: const Icon(Icons.fact_check_outlined, size: 18),
+                    label: const Text('عرض العمليات المسجلة'),
+                  ),
+                ),
+              ],
             ],
           ),
-          const Divider(height: 24, color: AppColors.borderLight),
-          TextButton.icon(
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => CustomerAccountLedgerScreen(summary: summary),
-              ),
-            ),
-            icon: const Icon(Icons.receipt_long_outlined),
-            label: const Text('عرض جميع الحركات'),
-          ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      isZero
-                          ? 'الحساب متزن (خالص)'
-                          : (owedOnCustomer
-                                ? 'المبلغ المستحق عليك:'
-                                : 'مبلغ مقدم لصالحك:'),
-                      style: AppTypography.caption(
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${currencyFormatter.format(balance.abs())} ${_currencySymbol(summary.currencyCode)}',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                        color: isZero
-                            ? AppColors.textMuted
-                            : (owedOnCustomer
-                                  ? AppColors.debtRed
-                                  : AppColors.paymentGreen),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${summary.entryCount} عملية • آخر حركة: ${_relativeTime(summary.lastEntryAt)}',
-                      style: AppTypography.caption(
-                        color: AppColors.textMuted,
-                      ).copyWith(fontSize: 10),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton.icon(
-                onPressed: () => _openPendingEntriesSheet(
-                  state,
-                  businessCustomerId: summary.businessCustomerId,
-                ),
-                icon: const Icon(AppIcons.shieldCheck, size: 16),
-                label: Text(
-                  pendingCount > 0 ? 'مراجعة ($pendingCount)' : 'لا قيود معلقة',
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.paymentGreen,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
+        ),
       ),
-    ).animate().fadeIn(duration: 200.ms);
+    );
   }
 }

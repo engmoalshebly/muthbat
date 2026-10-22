@@ -1,9 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import '../../../local_ledger/local_ledger_store.dart';
 import '../../../auth/presentation/controllers/auth_controller.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../../core/finance/currency_info.dart';
 import '../../../../core/sync/sync_engine.dart';
@@ -23,6 +23,8 @@ class MerchantDashboardState {
   final String businessAddress;
   final String businessContactPhone;
   final String businessLogoPath;
+  final Uint8List? businessLogoPreview;
+  final String? businessLogoSyncStatus;
   final String businessTimezone;
   final String currency;
   final String
@@ -30,6 +32,9 @@ class MerchantDashboardState {
   final List<String> supportedCurrencies;
   final List<CurrencyInfo> currencies;
   final List<BusinessCustomerModel> customers;
+  final List<BusinessCustomerModel> dashboardCustomers;
+  final bool hasMoreCustomers;
+  final int totalCustomerCount;
   final List<LedgerEntryModel> recentEntries;
   final List<LedgerEntryModel> ledgerEntries;
   final double totalReceivables; // إجمالي ما للتاجر عند العملاء
@@ -53,12 +58,17 @@ class MerchantDashboardState {
     this.businessAddress = '',
     this.businessContactPhone = '',
     this.businessLogoPath = '',
+    this.businessLogoPreview,
+    this.businessLogoSyncStatus,
     this.businessTimezone = 'Asia/Aden',
     this.currency = 'ر.ي',
     this.currencyCode = 'YER',
     this.supportedCurrencies = const ['YER'],
     this.currencies = CurrencyCatalog.defaults,
     this.customers = const [],
+    this.dashboardCustomers = const [],
+    this.hasMoreCustomers = false,
+    this.totalCustomerCount = 0,
     this.recentEntries = const [],
     this.ledgerEntries = const [],
     this.totalReceivables = 0.0,
@@ -82,12 +92,18 @@ class MerchantDashboardState {
     String? businessAddress,
     String? businessContactPhone,
     String? businessLogoPath,
+    Uint8List? businessLogoPreview,
+    String? businessLogoSyncStatus,
+    bool clearLogoPreview = false,
     String? businessTimezone,
     String? currency,
     String? currencyCode,
     List<String>? supportedCurrencies,
     List<CurrencyInfo>? currencies,
     List<BusinessCustomerModel>? customers,
+    List<BusinessCustomerModel>? dashboardCustomers,
+    bool? hasMoreCustomers,
+    int? totalCustomerCount,
     List<LedgerEntryModel>? recentEntries,
     List<LedgerEntryModel>? ledgerEntries,
     double? totalReceivables,
@@ -111,12 +127,21 @@ class MerchantDashboardState {
       businessAddress: businessAddress ?? this.businessAddress,
       businessContactPhone: businessContactPhone ?? this.businessContactPhone,
       businessLogoPath: businessLogoPath ?? this.businessLogoPath,
+      businessLogoPreview: clearLogoPreview
+          ? null
+          : businessLogoPreview ?? this.businessLogoPreview,
+      businessLogoSyncStatus: clearLogoPreview
+          ? null
+          : businessLogoSyncStatus ?? this.businessLogoSyncStatus,
       businessTimezone: businessTimezone ?? this.businessTimezone,
       currency: currency ?? this.currency,
       currencyCode: currencyCode ?? this.currencyCode,
       supportedCurrencies: supportedCurrencies ?? this.supportedCurrencies,
       currencies: currencies ?? this.currencies,
       customers: customers ?? this.customers,
+      dashboardCustomers: dashboardCustomers ?? this.dashboardCustomers,
+      hasMoreCustomers: hasMoreCustomers ?? this.hasMoreCustomers,
+      totalCustomerCount: totalCustomerCount ?? this.totalCustomerCount,
       recentEntries: recentEntries ?? this.recentEntries,
       ledgerEntries: ledgerEntries ?? this.ledgerEntries,
       totalReceivables: totalReceivables ?? this.totalReceivables,
@@ -134,13 +159,38 @@ class MerchantDashboardState {
 
 class MerchantController extends StateNotifier<MerchantDashboardState> {
   final MerchantRepository _repository;
+  final void Function() _requestBackgroundSync;
+  static void _syncInBackground() {
+    unawaited(SyncEngine.instance.triggerSync());
+  }
 
-  MerchantController(this._repository) : super(const MerchantDashboardState()) {
+  int _dashboardGeneration = 0;
+  String? _reportBusinessId;
+  int _reportGeneration = 0;
+
+  final String? _activeBusinessId;
+
+  MerchantController(
+    this._repository, {
+    String? activeBusinessId,
+    void Function()? requestSync,
+  }) : _activeBusinessId = activeBusinessId,
+       _requestBackgroundSync = requestSync ?? _syncInBackground,
+       super(const MerchantDashboardState()) {
     loadDashboard();
   }
 
+  @visibleForTesting
+  MerchantController.forTesting(
+    this._repository,
+    MerchantDashboardState initialState,
+  ) : _activeBusinessId = null,
+      _requestBackgroundSync = _syncInBackground,
+      super(initialState);
+
   /// ترجمة أخطاء PostgREST/الشبكة إلى رسائل عربية واضحة تُعرض للمستخدم
   String _friendlyError(Object e) {
+    if (e is MerchantApiException) return e.message;
     final msg = e.toString();
     if (msg.contains('PGRST202')) {
       return 'عقد غير متطابق مع الخادم — حدّث التطبيق أو تواصل مع الدعم';
@@ -165,11 +215,14 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
 
   /// تحميل بيانات لوحة تحكم التاجر الفعلي من الكاش المحلي.
   ///
-  /// مصدر الحقيقة الوحيد للمستخدم هو جلسة Supabase Auth — لا SharedPreferences.
-  /// إذا لم يوجد محل حقيقي (بيانات من السيرفر عبر المزامنة)، تظهر حالة فارغة
-  /// بدل فبركة محل وهمي (كان biz-$userId — أُلغي لأنه هوية مفبركة).
-  Future<void> loadDashboard([String? userId]) async {
-    state = state.copyWith(isLoading: true);
+  /// هوية المستخدم من قاعدة الحساب المفتوحة محلياً؛ لا تنتظر تجديد جلسة الشبكة.
+  Future<void> loadDashboard({String? userId, bool silent = false}) async {
+    final dashboardGeneration = ++_dashboardGeneration;
+    final directoryGeneration = ++_directoryGeneration;
+    final directoryQuery = state.searchQuery;
+    if (state.businessId.isEmpty) {
+      state = state.copyWith(isLoading: true);
+    }
 
     try {
       // مصدر الحقيقة الوحيد — جلسة Supabase الحية (لا cached_user_id)
@@ -185,9 +238,17 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
 
       // البحث عن محل حقيقي مرتبط بالمستخدم (من المزامنة/الباكند)
       Map<String, dynamic>? activeBiz;
-      final notebook = await LocalLedgerStore.instance.current();
-      String? preferredBusiness;
-      if (notebook != null &&
+      final notebook = _activeBusinessId == null
+          ? await LocalLedgerStore.instance.current()
+          : null;
+      String? preferredBusiness = _activeBusinessId;
+      if (preferredBusiness != null) {
+        preferredBusiness =
+            await AppDatabase.instance.getServerId(preferredBusiness) ??
+            preferredBusiness;
+      }
+      if (_activeBusinessId == null &&
+          notebook != null &&
           notebook['transfer_state'] == 'complete' &&
           notebook['owner_id'] == currentUserId) {
         preferredBusiness = notebook['server_business_id'] as String?;
@@ -199,8 +260,12 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
         final db = await AppDatabase.instance.database;
         final matches = await db.query(
           'local_businesses',
-          where: 'id = ? AND owner_user_id = ?',
-          whereArgs: [preferredBusiness, currentUserId],
+          where: _activeBusinessId != null
+              ? 'id = ?'
+              : 'id = ? AND owner_user_id = ?',
+          whereArgs: _activeBusinessId != null
+              ? [preferredBusiness]
+              : [preferredBusiness, currentUserId],
         );
         activeBiz = matches.isEmpty ? null : matches.first;
       }
@@ -210,57 +275,21 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
         );
       }
 
-      // إذا لم يوجد في الكاش المحلي، نقوم بجلبه من Supabase مباشرة
-      if (activeBiz == null) {
-        try {
-          var businessQuery = Supabase.instance.client
-              .from('businesses')
-              .select()
-              .eq('owner_user_id', currentUserId);
-          if (preferredBusiness != null) {
-            businessQuery = businessQuery.eq('id', preferredBusiness);
-          }
-          final serverBiz = await businessQuery.limit(1).maybeSingle();
-          if (serverBiz != null) {
-            final localServerBiz = Map<String, dynamic>.from(serverBiz);
-            final rawCurrencies = localServerBiz['additional_currencies'];
-            localServerBiz['additional_currencies'] = jsonEncode(
-              rawCurrencies is List
-                  ? rawCurrencies
-                        .map((e) => e.toString().toUpperCase())
-                        .toList()
-                  : const [],
-            );
-            await AppDatabase.instance.saveBusiness({
-              'id': localServerBiz['id'],
-              'owner_user_id': localServerBiz['owner_user_id'],
-              'name': localServerBiz['name'],
-              'business_type': localServerBiz['business_type'],
-              'currency_code': localServerBiz['currency_code'],
-              'additional_currencies': localServerBiz['additional_currencies'],
-              'country_code': localServerBiz['country_code'],
-              'city': localServerBiz['city'],
-              'address': localServerBiz['address'],
-              'contact_phone': localServerBiz['contact_phone_display'],
-              'logo_path': localServerBiz['logo_path'],
-              'timezone': localServerBiz['timezone'],
-              'is_active': 1,
-              'created_at': localServerBiz['created_at'],
-            });
-            activeBiz = serverBiz;
-          }
-        } catch (e) {
-          debugPrint('[MerchantController] fetch business error: $e');
-        }
-      }
+      // Only the synchronized account database is read while opening a screen.
 
       // لا يوجد محل حقيقي → حالة فارغة (المحل يُنشأ عبر create_business من الباكند)
       if (activeBiz == null) {
+        if (!mounted || dashboardGeneration != _dashboardGeneration) return;
         state = state.copyWith(
           isLoading: false,
           businessId: '',
           businessName: '',
+          businessLogoPath: '',
+          clearLogoPreview: true,
           customers: const [],
+          dashboardCustomers: const [],
+          hasMoreCustomers: false,
+          totalCustomerCount: 0,
           recentEntries: const [],
           ledgerEntries: const [],
           totalReceivables: 0.0,
@@ -282,6 +311,31 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
               as String? ??
           '';
       final businessLogoPath = activeBiz['logo_path'] as String? ?? '';
+      final database = await AppDatabase.instance.database;
+      final logoQueue = await database.query(
+        'offline_mutations_queue',
+        columns: ['payload_json', 'status'],
+        where: "local_ref_id=? AND command_type=? AND status!='dead_letter'",
+        whereArgs: [businessId, 'upload_business_logo'],
+        orderBy: 'id DESC',
+        limit: 1,
+      );
+      Uint8List? logoPreview;
+      String? logoStatus;
+      if (logoQueue.isNotEmpty) {
+        try {
+          final payload =
+              jsonDecode(logoQueue.first['payload_json'] as String)
+                  as Map<String, dynamic>;
+          final encoded = payload['bytes'];
+          if (encoded is String) {
+            logoPreview = base64Decode(encoded);
+            logoStatus = logoQueue.first['status'] as String?;
+          }
+        } on FormatException {
+          // An invalid cached preview must not prevent the dashboard from loading.
+        }
+      }
       final businessTimezone = activeBiz['timezone'] as String? ?? 'Asia/Aden';
       final currencyCode = (activeBiz['currency_code'] as String? ?? 'YER')
           .toUpperCase();
@@ -306,10 +360,15 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
 
       final customers = await _repository.getCustomers(
         businessId,
-        searchQuery: state.searchQuery,
+        searchQuery: directoryQuery,
+        limit: 51,
+      );
+      final dashboardCustomers = await _repository.getDashboardCustomers(
+        businessId,
+        currencyCode,
       );
       final ledgerEntryRows = await AppDatabase.instance
-          .getRecentBusinessLedgerEntries(businessId, limit: 10000);
+          .getRecentBusinessLedgerEntries(businessId, limit: 10);
       final ledgerEntries = ledgerEntryRows
           .map(LedgerEntryModel.fromMap)
           .toList();
@@ -322,60 +381,33 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
           code: {'receivables': 0.0, 'payables': 0.0, 'customers': 0.0},
       };
 
-      for (final c in customers) {
-        if (c.currencyBalances.isNotEmpty) {
-          c.currencyBalances.forEach((curr, bal) {
-            final key = curr.toUpperCase();
-            breakdown.putIfAbsent(
-              key,
-              () => {'receivables': 0.0, 'payables': 0.0, 'customers': 0.0},
-            );
-            if (bal > 0) {
-              breakdown[key]!['receivables'] =
-                  (breakdown[key]!['receivables'] ?? 0.0) + bal;
-              breakdown[key]!['customers'] =
-                  (breakdown[key]!['customers'] ?? 0.0) + 1;
-            } else if (bal < 0) {
-              breakdown[key]!['payables'] =
-                  (breakdown[key]!['payables'] ?? 0.0) + bal.abs();
-              breakdown[key]!['customers'] =
-                  (breakdown[key]!['customers'] ?? 0.0) + 1;
-            }
-          });
-        } else if (c.currentBalance != 0) {
-          // Legacy balance assigned to YER
-          if (c.currentBalance > 0) {
-            breakdown.putIfAbsent(
-              currencyCode,
-              () => {'receivables': 0.0, 'payables': 0.0, 'customers': 0.0},
-            );
-            breakdown[currencyCode]!['receivables'] =
-                (breakdown[currencyCode]!['receivables'] ?? 0.0) +
-                c.currentBalance;
-            breakdown[currencyCode]!['customers'] =
-                (breakdown[currencyCode]!['customers'] ?? 0.0) + 1;
-          } else if (c.currentBalance < 0) {
-            breakdown.putIfAbsent(
-              currencyCode,
-              () => {'receivables': 0.0, 'payables': 0.0, 'customers': 0.0},
-            );
-            breakdown[currencyCode]!['payables'] =
-                (breakdown[currencyCode]!['payables'] ?? 0.0) +
-                c.currentBalance.abs();
-            breakdown[currencyCode]!['customers'] =
-                (breakdown[currencyCode]!['customers'] ?? 0.0) + 1;
-          }
-        }
+      final totals = await AppDatabase.instance.getActiveCustomerTotals(
+        businessId,
+        currencyCode,
+      );
+      for (final row in totals) {
+        breakdown[row['currency_code'] as String] = {
+          'receivables': (row['receivables'] as num).toDouble(),
+          'payables': (row['payables'] as num).toDouble(),
+          'customers': (row['customers'] as num).toDouble(),
+        };
       }
+      final totalCustomerCount = await AppDatabase.instance
+          .countActiveCustomers(businessId);
       // Legacy headline totals are base-currency only; other currencies stay
       // isolated in currencyBreakdown.
       receivables = breakdown[currencyCode]?['receivables'] ?? 0.0;
       payables = breakdown[currencyCode]?['payables'] ?? 0.0;
 
-      final disputes = await _repository.getDisputes(businessId);
+      final disputes = await _repository.getCachedDisputes(businessId);
       final openDisputes = disputes.where((d) => d.isOpen).length;
+      if (!mounted ||
+          dashboardGeneration != _dashboardGeneration ||
+          AppDatabase.instance.accountId != currentUserId) {
+        return;
+      }
 
-      state = state.copyWith(
+      final nextState = state.copyWith(
         isLoading: false,
         businessId: businessId,
         businessName: businessName,
@@ -385,25 +417,102 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
         businessAddress: businessAddress,
         businessContactPhone: businessContactPhone,
         businessLogoPath: businessLogoPath,
+        businessLogoPreview: logoPreview,
+        businessLogoSyncStatus: logoStatus,
+        clearLogoPreview: logoPreview == null,
         businessTimezone: businessTimezone,
         currency: currencyCode == 'YER' ? 'ر.ي' : currencyCode,
         currencyCode: currencyCode,
         supportedCurrencies: supportedCurrencies,
         currencies: currencies,
-        customers: customers,
+        customers: directoryGeneration == _directoryGeneration
+            ? customers.take(50).toList()
+            : state.customers,
+        hasMoreCustomers: directoryGeneration == _directoryGeneration
+            ? customers.length > 50
+            : state.hasMoreCustomers,
+        totalCustomerCount: totalCustomerCount,
+        dashboardCustomers: dashboardCustomers,
         recentEntries: recentEntries,
-        ledgerEntries: ledgerEntries,
+        ledgerEntries: _reportBusinessId == businessId
+            ? state.ledgerEntries
+            : ledgerEntries,
         totalReceivables: receivables,
         totalPayables: payables,
         currencyBreakdown: breakdown,
         disputes: disputes,
         openDisputesCount: openDisputes,
         isBusinessOwner: isBusinessOwner,
-        clearError: true,
+        clearError: !silent,
       );
+      // A routine pull with no visible changes should not rebuild the entire
+      // merchant dashboard or reset its current interaction.
+      if (silent &&
+          jsonEncode(_visibleDashboardSnapshot(state)) ==
+              jsonEncode(_visibleDashboardSnapshot(nextState))) {
+        return;
+      }
+      state = nextState;
     } catch (e) {
+      if (!mounted || dashboardGeneration != _dashboardGeneration) return;
       state = state.copyWith(isLoading: false, lastError: _friendlyError(e));
     }
+  }
+
+  Map<String, Object?> _visibleDashboardSnapshot(MerchantDashboardState s) => {
+    'businessId': s.businessId,
+    'businessName': s.businessName,
+    'businessCity': s.businessCity,
+    'businessType': s.businessType,
+    'businessCountryCode': s.businessCountryCode,
+    'businessAddress': s.businessAddress,
+    'businessContactPhone': s.businessContactPhone,
+    'businessLogoPath': s.businessLogoPath,
+    'businessTimezone': s.businessTimezone,
+    'currencyCode': s.currencyCode,
+    'supportedCurrencies': s.supportedCurrencies,
+    'customers': s.customers.map((item) => item.toMap()).toList(),
+    'dashboardCustomers': s.dashboardCustomers
+        .map((item) => item.toMap())
+        .toList(),
+    'hasMoreCustomers': s.hasMoreCustomers,
+    'totalCustomerCount': s.totalCustomerCount,
+    'recentEntries': s.recentEntries.map((item) => item.toMap()).toList(),
+    'totalReceivables': s.totalReceivables,
+    'totalPayables': s.totalPayables,
+    'currencyBreakdown': s.currencyBreakdown,
+    'openDisputesCount': s.openDisputesCount,
+    'lastError': s.lastError,
+  };
+
+  /// Load the year-long report only while its tab is open.
+  Future<void> loadReportEntries() async {
+    final generation = ++_reportGeneration;
+    final businessId = state.businessId;
+    final accountId = AppDatabase.instance.accountId;
+    if (businessId.isEmpty || accountId == null) return;
+    final rows = await AppDatabase.instance.getBusinessLedgerEntriesSince(
+      businessId,
+      DateTime.now().subtract(const Duration(days: 365)),
+    );
+    if (!mounted ||
+        generation != _reportGeneration ||
+        state.businessId != businessId ||
+        AppDatabase.instance.accountId != accountId) {
+      return;
+    }
+    _reportBusinessId = businessId;
+    state = state.copyWith(
+      ledgerEntries: rows.map(LedgerEntryModel.fromMap).toList(),
+    );
+  }
+
+  bool get hasLocalReport => _reportBusinessId == state.businessId;
+
+  void clearReportEntries() {
+    _reportGeneration++;
+    _reportBusinessId = null;
+    state = state.copyWith(ledgerEntries: state.recentEntries);
   }
 
   Future<bool> updateCustomer({
@@ -463,7 +572,10 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
     Uint8List? logoBytes,
     String logoExtension = 'jpg',
   }) async {
-    state = state.copyWith(isLoading: true, clearError: true);
+    state = state.copyWith(
+      isLoading: state.businessId.isEmpty,
+      clearError: true,
+    );
     try {
       await _repository.createBusiness(
         name: name,
@@ -487,7 +599,7 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
 
   Future<bool> updateCurrencies(List<String> additionalCurrencies) async {
     if (state.businessId.isEmpty) return false;
-    state = state.copyWith(isLoading: true, clearError: true);
+    state = state.copyWith(clearError: true);
     try {
       await _repository.updateBusinessCurrencies(
         businessId: state.businessId,
@@ -506,7 +618,7 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
     required String extension,
   }) async {
     if (state.businessId.isEmpty) return false;
-    state = state.copyWith(isLoading: true, clearError: true);
+    state = state.copyWith(clearError: true);
     try {
       await _repository.updateBusinessLogo(
         businessId: state.businessId,
@@ -531,7 +643,7 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
     required String timezone,
   }) async {
     if (state.businessId.isEmpty) return false;
-    state = state.copyWith(isLoading: true, clearError: true);
+    state = state.copyWith(clearError: true);
     try {
       await _repository.updateBusinessProfile(
         businessId: state.businessId,
@@ -569,11 +681,16 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
 
   /// إرسال رسالة في الاعتراض
   Future<bool> sendDisputeMessage(String disputeId, String message) async {
-    final success = await _repository.addDisputeMessage(disputeId, message);
-    if (success) {
-      await loadDisputes();
+    try {
+      final success = await _repository.addDisputeMessage(disputeId, message);
+      if (success) {
+        await loadDisputes();
+      }
+      return success;
+    } catch (error) {
+      if (mounted) state = state.copyWith(lastError: _friendlyError(error));
+      return false;
     }
-    return success;
   }
 
   /// حل الاعتراض
@@ -583,22 +700,85 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
     required String note,
     double? correctedAmount,
   }) async {
-    final success = await _repository.resolveDispute(
-      disputeId: disputeId,
-      resolution: resolution,
-      note: note,
-      correctedAmount: correctedAmount,
-    );
-    if (success) {
-      await loadDashboard();
+    try {
+      final success = await _repository.resolveDispute(
+        disputeId: disputeId,
+        resolution: resolution,
+        note: note,
+        correctedAmount: correctedAmount,
+      );
+      if (success) {
+        await loadDashboard();
+      }
+      return success;
+    } catch (error) {
+      if (mounted) state = state.copyWith(lastError: _friendlyError(error));
+      return false;
     }
-    return success;
   }
 
   /// تصفية وبحث في قائمة العملاء
-  void search(String query) {
+  int _directoryGeneration = 0;
+  bool _loadingMore = false;
+  Future<void> search(String query) async {
+    final generation = ++_directoryGeneration;
+    final business = state.businessId;
     state = state.copyWith(searchQuery: query);
-    loadDashboard();
+    try {
+      final page = await _repository.getCustomers(
+        business,
+        searchQuery: query,
+        limit: 51,
+      );
+      if (!mounted ||
+          generation != _directoryGeneration ||
+          state.businessId != business) {
+        return;
+      }
+      state = state.copyWith(
+        customers: page.take(50).toList(),
+        hasMoreCustomers: page.length > 50,
+      );
+    } catch (e) {
+      if (mounted && generation == _directoryGeneration) {
+        state = state.copyWith(lastError: _friendlyError(e));
+      }
+    }
+  }
+
+  Future<void> loadMoreCustomers() async {
+    if (_loadingMore || !state.hasMoreCustomers) return;
+    _loadingMore = true;
+    final generation = _directoryGeneration,
+        business = state.businessId,
+        query = state.searchQuery;
+    try {
+      final page = await _repository.getCustomers(
+        business,
+        searchQuery: query,
+        limit: 51,
+        offset: state.customers.length,
+      );
+      if (!mounted ||
+          generation != _directoryGeneration ||
+          business != state.businessId ||
+          query != state.searchQuery) {
+        return;
+      }
+      final combined = {
+        for (final c in [...state.customers, ...page.take(50)]) c.id: c,
+      };
+      state = state.copyWith(
+        customers: combined.values.toList(),
+        hasMoreCustomers: page.length > 50,
+      );
+    } catch (e) {
+      if (mounted && generation == _directoryGeneration) {
+        state = state.copyWith(lastError: _friendlyError(e));
+      }
+    } finally {
+      _loadingMore = false;
+    }
   }
 
   /// إضافة عميل جديد
@@ -612,7 +792,7 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
     try {
       var bizId = state.businessId;
       if (bizId.isEmpty) {
-        final currentUserId = Supabase.instance.client.auth.currentUser?.id;
+        final currentUserId = AppDatabase.instance.accountId;
         if (currentUserId != null) {
           final biz =
               await AppDatabase.instance.getBusinessByOwnerId(currentUserId) ??
@@ -656,7 +836,7 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
     required String entryType,
     required double amount,
     required String description,
-    String currencyCode = 'YER',
+    required String currencyCode,
     String category = 'goods',
     String paymentMethod = 'cash',
     String? referenceNumber,
@@ -692,7 +872,7 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
     required String businessCustomerId,
     required double amount,
     required String description,
-    String currencyCode = 'YER',
+    required String currencyCode,
   }) async {
     try {
       await _repository.applyCustomerDiscount(
@@ -718,7 +898,7 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
     required String originalDirection,
     required double originalAmount,
     required String reason,
-    String currencyCode = 'YER',
+    required String currencyCode,
   }) async {
     try {
       await _repository.reverseLedgerEntry(
@@ -740,9 +920,10 @@ class MerchantController extends StateNotifier<MerchantDashboardState> {
   }
 
   /// تشغيل المزامنة الفورية
-  Future<void> syncNow() async {
-    await SyncEngine.instance.triggerSync();
-    await loadDashboard();
+  Future<bool> syncNow() async {
+    _requestBackgroundSync();
+    await loadDashboard(silent: true);
+    return true; // Local refresh completed; cloud outcome is reported separately.
   }
 }
 
@@ -753,6 +934,10 @@ final merchantRepositoryProvider = Provider<MerchantRepository>((ref) {
 final merchantControllerProvider =
     StateNotifierProvider<MerchantController, MerchantDashboardState>((ref) {
       ref.watch(authControllerProvider.select((auth) => auth.userId));
+      final activeBusinessId = ref.watch(
+        authControllerProvider.select((auth) => auth.activeBusinessId),
+      );
+      ref.watch(authControllerProvider.select((auth) => auth.businessRole));
       final repo = ref.watch(merchantRepositoryProvider);
-      return MerchantController(repo);
+      return MerchantController(repo, activeBusinessId: activeBusinessId);
     });

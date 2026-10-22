@@ -8,6 +8,8 @@
 *.keystore
 key.properties
 google-services.json
+*service-account*.json
+*firebase-adminsdk*.json
 
 # Dependencies and generated builds
 node_modules/
@@ -55,3 +57,4 @@ desktop.ini
 OpenWA/qrcode.png
 OpenWA/.wwebjs_auth/
 OpenWA/.wwebjs_cache/
+muthbat/

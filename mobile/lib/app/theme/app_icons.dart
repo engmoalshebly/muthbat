@@ -7,6 +7,14 @@ import 'app_colors.dart';
 class AppIcons {
   AppIcons._();
 
+  static IconData transaction(String type) => switch (type) {
+    'debt' => debt,
+    'payment' => receivePayment,
+    'discount' => discount,
+    'reversal' => reversal,
+    _ => receipt,
+  };
+
   // ==================== 1. التنقل والأقسام الرئيسية ====================
   static const IconData home = LucideIcons.house;
   static const IconData customers = LucideIcons.users;
@@ -22,7 +30,7 @@ class AppIcons {
   static const IconData balance = LucideIcons.circleDollarSign;
   static const IconData cash = LucideIcons.banknote;
   static const IconData creditCard = LucideIcons.creditCard;
-  
+
   /// دين جديد (حركة مدينة - أحمر)
   static const IconData debt = LucideIcons.arrowUpRight;
   static const IconData addDebt = LucideIcons.circlePlus;
@@ -50,7 +58,7 @@ class AppIcons {
   static const IconData dispute = LucideIcons.badgeAlert;
   static const IconData warning = LucideIcons.triangleAlert;
   static const IconData notifications = LucideIcons.bell;
-  
+
   /// المزامنة والحفظ السحابي
   static const IconData sync = LucideIcons.refreshCw;
   static const IconData synced = LucideIcons.cloudCheck;
@@ -72,7 +80,7 @@ class AppIcons {
 
   // ==================== 5. الأسهم والتوجيه (متوافقة مع RTL) ====================
   static const IconData chevronStart = LucideIcons.chevronRight; // RTL Back
-  static const IconData chevronEnd = LucideIcons.chevronLeft;   // RTL Forward
+  static const IconData chevronEnd = LucideIcons.chevronLeft; // RTL Forward
   static const IconData chevronDown = LucideIcons.chevronDown;
   static const IconData chevronUp = LucideIcons.chevronUp;
   static const IconData arrowStart = LucideIcons.arrowRight;
@@ -169,7 +177,8 @@ class AppIconBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final effectiveColor = color ?? AppColors.primary;
-    final effectiveBg = backgroundColor ?? effectiveColor.withValues(alpha: 0.10);
+    final effectiveBg =
+        backgroundColor ?? effectiveColor.withValues(alpha: 0.10);
 
     Widget box = Container(
       padding: EdgeInsets.all(padding),
@@ -177,11 +186,7 @@ class AppIconBox extends StatelessWidget {
         color: effectiveBg,
         borderRadius: BorderRadius.circular(borderRadius),
       ),
-      child: Icon(
-        icon,
-        size: size,
-        color: effectiveColor,
-      ),
+      child: Icon(icon, size: size, color: effectiveColor),
     );
 
     if (onTap != null) {

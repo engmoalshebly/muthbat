@@ -6,6 +6,20 @@ import 'package:muthbat/features/customer/presentation/controllers/customer_cont
 
 class FakeCustomerRepository extends CustomerRepository {
   @override
+  Future<void> refreshPhoneLinks() async {
+    throw const CustomerPhoneVerificationRequired();
+  }
+
+  @override
+  Future<CustomerReadSnapshot> fetchHomeSnapshot() async =>
+      CustomerReadSnapshot(
+        customerId: await resolveCustomerId(),
+        updatedAt: '2026-10-19T00:00:00Z',
+        summaries: [],
+        requests: [],
+        entries: [],
+      );
+  @override
   Future<List<Map<String, dynamic>>> pendingActions() async => [];
   @override
   Future<void> flushOutbox() async {}
@@ -39,8 +53,11 @@ void main() {
     final controller = CustomerController(repo);
     final first = controller.load();
     await Future<void>.delayed(Duration.zero);
-    final second = controller.load();
-    await Future<void>.delayed(Duration.zero);
+    final second = controller.load(force: true);
+    for (var i = 0; i < 100 && repo.identities.length < 2; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    expect(repo.identities, hasLength(2));
     repo.identities[1].complete('new');
     await second;
     repo.identities[0].complete('old');

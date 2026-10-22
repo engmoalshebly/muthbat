@@ -2,10 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../../app/theme/app_colors.dart';
 import '../../../../app/theme/app_typography.dart';
 
-enum UserAccountType {
-  merchant,
-  customer,
-}
+enum UserAccountType { merchant, customer }
 
 /// محدد نوع الحساب (صاحب محل أو عميل)
 class UserTypeSelector extends StatelessWidget {
@@ -58,7 +55,9 @@ class UserTypeSelector extends StatelessWidget {
         duration: const Duration(milliseconds: 250),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
         decoration: BoxDecoration(
-          color: isSelected ? AppColors.primaryContainer.withValues(alpha: 0.6) : Colors.white,
+          color: isSelected
+              ? AppColors.primaryContainer.withValues(alpha: 0.6)
+              : AppColors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: isSelected ? AppColors.secondary : AppColors.borderLight,
@@ -79,13 +78,15 @@ class UserTypeSelector extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: isSelected ? AppColors.secondary : AppColors.backgroundLight,
+                color: isSelected
+                    ? AppColors.secondary
+                    : AppColors.backgroundLight,
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 icon,
                 size: 24,
-                color: isSelected ? Colors.white : AppColors.primary,
+                color: isSelected ? AppColors.white : AppColors.primary,
               ),
             ),
             const SizedBox(height: 12),
@@ -100,7 +101,9 @@ class UserTypeSelector extends StatelessWidget {
               subtitle,
               textAlign: TextAlign.center,
               style: AppTypography.bodySmall(
-                color: isSelected ? AppColors.secondaryDark : AppColors.textSecondary,
+                color: isSelected
+                    ? AppColors.secondaryDark
+                    : AppColors.textSecondary,
               ),
             ),
           ],
