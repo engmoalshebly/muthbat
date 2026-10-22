@@ -390,10 +390,24 @@ class MerchantRepository {
           ? null
           : contactPhone.trim(),
       'timezone': timezone,
-      'updated_at': now,
     };
     final db = await AppDatabase.instance.database;
     await db.transaction((txn) async {
+      final businesses = await txn.query(
+        'local_businesses',
+        columns: ['owner_user_id'],
+        where: 'id=?',
+        whereArgs: [businessId],
+        limit: 1,
+      );
+      if (businesses.isEmpty ||
+          AppDatabase.instance.accountId == null ||
+          businesses.first['owner_user_id'] != AppDatabase.instance.accountId) {
+        throw const MerchantApiException(
+          code: '42501',
+          message: 'تعديل بيانات المتجر متاح للمالك فقط.',
+        );
+      }
       await txn.update(
         'local_businesses',
         {

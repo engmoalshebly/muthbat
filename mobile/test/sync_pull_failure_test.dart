@@ -33,6 +33,10 @@ void main() {
   final profileRequests = <Map<String, dynamic>>[];
   bool withDispute = false;
   Map<String, dynamic>? resolutionRequest;
+  Map<String, dynamic>? profileUpdate;
+  Map<String, dynamic>? sentMessage;
+  var contractReady = true;
+  var profileVisible = true;
   Completer<void>? pullEntered;
   Completer<void>? releasePull;
   Completer<void>? resolutionSent;
@@ -63,6 +67,10 @@ void main() {
     profileRequests.clear();
     withDispute = false;
     resolutionRequest = null;
+    profileUpdate = null;
+    sentMessage = null;
+    contractReady = true;
+    profileVisible = true;
     pullEntered = null;
     releasePull = null;
     resolutionSent = null;
@@ -81,6 +89,19 @@ void main() {
               request: request,
             );
         final table = request.url.path.split('/').last;
+        if (table == 'client_sync_contract') {
+          return respond({
+            'version': contractReady ? '20261022-profile-disputes-v1' : 'old',
+          });
+        }
+        if (table == 'add_dispute_message') {
+          sentMessage = jsonDecode(request.body) as Map<String, dynamic>;
+          return respond('f1900000-0000-0000-0000-000000000088');
+        }
+        if (table == 'businesses' && request.method == 'PATCH') {
+          profileUpdate = jsonDecode(request.body) as Map<String, dynamic>;
+          return respond(profileVisible ? {'id': business} : null);
+        }
         if (table == 'disputes') await disputeGate?.future;
         requests.add(request.url);
         if (table == 'token') {
@@ -333,6 +354,127 @@ void main() {
   });
 
   test(
+    'old profile queue only sends editable columns and requires confirmation',
+    () async {
+      const request = 'f1900000-0000-0000-0000-000000000091';
+      await AppDatabase.instance.enqueueMutation(
+        commandType: 'update_business_profile',
+        clientRequestId: request,
+        localRefId: business,
+        payload: {
+          'businessId': business,
+          'name': 'Updated shop',
+          'country_code': 'SA',
+          'updated_at': '2026-01-01T00:00:00Z',
+          'owner_user_id': 'forbidden',
+        },
+      );
+      expect(await engine.triggerSync(), isTrue);
+      expect(profileUpdate, {'name': 'Updated shop', 'country_code': 'SA'});
+      expect(
+        await AppDatabase.instance.getMutationByClientRequestId(request),
+        isNull,
+      );
+    },
+  );
+
+  test('an invisible profile update stays queued as a failure', () async {
+    profileVisible = false;
+    const request = 'f1900000-0000-0000-0000-000000000092';
+    addTearDown(() => AppDatabase.instance.removeMutation(request));
+    await AppDatabase.instance.enqueueMutation(
+      commandType: 'update_business_profile',
+      clientRequestId: request,
+      localRefId: business,
+      payload: {'businessId': business, 'name': 'Unauthorized'},
+    );
+    expect(await engine.triggerSync(), isFalse);
+    expect(
+      (await AppDatabase.instance.getMutationByClientRequestId(
+        request,
+      ))?['status'],
+      'dead_letter',
+    );
+  });
+
+  test(
+    'deployment recovery preserves message request IDs and awaits server capability',
+    () async {
+      const request = 'f1900000-0000-0000-0000-000000000093';
+      addTearDown(() => AppDatabase.instance.removeMutation(request));
+      final store = AppDatabase.instance;
+      await store.enqueueMutation(
+        commandType: 'add_dispute_message',
+        clientRequestId: request,
+        payload: {
+          'p_dispute_id': 'dispute',
+          'p_message': 'queued reply',
+          'p_client_request_id': request,
+          'p_sender_workspace': 'merchant',
+        },
+      );
+      await store.markMutationDeadLetter(
+        request,
+        attemptCount: 1,
+        error: 'Could not find the function',
+        errorCode: 'PGRST202',
+      );
+      contractReady = false;
+      expect(await engine.triggerSync(), isFalse);
+      expect(sentMessage, isNull);
+      expect(
+        (await store.getMutationByClientRequestId(request))?['status'],
+        'dead_letter',
+      );
+      contractReady = true;
+      expect(await engine.triggerSync(), isTrue);
+      expect(sentMessage?['p_client_request_id'], request);
+      expect(sentMessage?['p_sender_workspace'], 'merchant');
+      expect(await store.getMutationByClientRequestId(request), isNull);
+    },
+  );
+
+  test(
+    'deployment repair retries each request only once and leaves other denials alone',
+    () async {
+      final store = AppDatabase.instance;
+      const repaired = 'f1900000-0000-0000-0000-000000000094';
+      const denied = 'f1900000-0000-0000-0000-000000000095';
+      addTearDown(() async {
+        await store.removeMutation(repaired);
+        await store.removeMutation(denied);
+      });
+      for (final request in [repaired, denied]) {
+        await store.enqueueMutation(
+          commandType: 'update_business_profile',
+          clientRequestId: request,
+          payload: {'businessId': business, 'name': 'profile'},
+        );
+        await store.markMutationDeadLetter(
+          request,
+          attemptCount: 1,
+          error: request == repaired
+              ? 'permission denied for table businesses'
+              : 'Not authorized',
+          errorCode: '42501',
+        );
+      }
+      expect(await store.recoverDeploymentContractFailures(), 1);
+      expect(
+        (await store.getMutationByClientRequestId(denied))?['status'],
+        'dead_letter',
+      );
+      await store.markMutationDeadLetter(
+        repaired,
+        attemptCount: 1,
+        error: 'permission denied for table businesses',
+        errorCode: '42501',
+      );
+      expect(await store.recoverDeploymentContractFailures(), 0);
+    },
+  );
+
+  test(
     'merchant data is published before slow dispute hydration completes',
     () async {
       disputeGate = Completer<void>();
@@ -390,6 +532,20 @@ void main() {
   test(
     'contact service failure does not hide newly downloaded disputes',
     () async {
+      addTearDown(() async {
+        final db = await AppDatabase.instance.database;
+        const customer = 'f1900000-0000-0000-0000-000000000090';
+        await db.delete(
+          'local_sync_state',
+          where: 'key=?',
+          whereArgs: ['contact:$customer'],
+        );
+        await db.delete(
+          'local_business_customers',
+          where: 'id=?',
+          whereArgs: [customer],
+        );
+      });
       withDispute = true;
       contactCustomer = true;
       failingTable = 'customer-contacts';

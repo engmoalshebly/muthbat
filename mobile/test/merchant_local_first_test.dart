@@ -79,6 +79,57 @@ void main() {
   });
   tearDownAll(() => store.lockAccount());
   test(
+    'pending business edits survive server pulls and reject edits of another owner',
+    () async {
+      await repository.updateBusinessProfile(
+        businessId: 'business',
+        name: 'Local edit',
+        businessType: 'retail',
+        countryCode: 'SA',
+        city: 'Aden',
+        address: '',
+        contactPhone: '',
+        timezone: 'Asia/Aden',
+      );
+      final db = await store.database;
+      final queued = (await store.getPendingMutations()).singleWhere(
+        (row) => row['command_type'] == 'update_business_profile',
+      );
+      final payload = jsonDecode(queued['payload_json'] as String) as Map;
+      expect(payload.containsKey('updated_at'), isFalse);
+      await store.saveBusiness({
+        'id': 'business',
+        'owner_user_id': owner,
+        'name': 'Stale server value',
+        'country_code': 'YE',
+        'is_active': 1,
+        'currency_code': 'YER',
+      });
+      expect((await store.getBusinessByOwnerId(owner))?['name'], 'Local edit');
+      expect((await store.getBusinessByOwnerId(owner))?['country_code'], 'SA');
+      await expectLater(
+        repository.updateBusinessProfile(
+          businessId: 'not-owned',
+          name: 'bad',
+          businessType: 'retail',
+          countryCode: 'YE',
+          city: '',
+          address: '',
+          contactPhone: '',
+          timezone: 'Asia/Aden',
+        ),
+        throwsA(isA<MerchantApiException>()),
+      );
+      await store.removeMutation(queued['client_request_id'] as String);
+      await db.update(
+        'local_businesses',
+        {'name': 'متجري'},
+        where: 'id=?',
+        whereArgs: ['business'],
+      );
+    },
+  );
+  test(
     'logo is persisted offline, preview survives reopen, and duplicate pending changes are blocked',
     () async {
       final recorder = ui.PictureRecorder();

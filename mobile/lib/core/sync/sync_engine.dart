@@ -339,6 +339,7 @@ class SyncEngine with WidgetsBindingObserver {
         current: AppDatabase.instance.accountId,
       );
 
+      await _recoverDeploymentFailures(syncAccountId);
       final pendingCount = await AppDatabase.instance
           .getPendingMutationsCount();
       if (pendingCount > 0) {
@@ -408,6 +409,37 @@ class SyncEngine with WidgetsBindingObserver {
   }
 
   // ==================== Push: إرسال الأوامر المعلقة ====================
+
+  Future<void> _recoverDeploymentFailures(String owner) async {
+    final store = AppDatabase.instance;
+    final db = await store.database;
+    final candidates = await db.rawQuery(
+      '''SELECT q.id FROM offline_mutations_queue q
+      WHERE q.status='dead_letter' AND (
+        (q.command_type='add_dispute_message' AND q.last_error_code='PGRST202') OR
+        (q.command_type='update_business_profile' AND q.last_error_code='42501'
+          AND q.last_error LIKE '%permission denied for table businesses%'))
+      AND NOT EXISTS(SELECT 1 FROM local_sync_state s
+        WHERE s.key='contract-repair-20261022:'||q.client_request_id) LIMIT 1''',
+    );
+    if (candidates.isEmpty) return;
+    try {
+      final result = await _client
+          .rpc('client_sync_contract')
+          .timeout(const Duration(seconds: 8));
+      requireCloudSession(_client, owner);
+      assertSyncAccount(expected: owner, current: store.accountId);
+      if (result is Map &&
+          result['version'] == '20261022-profile-disputes-v1') {
+        await store.recoverDeploymentContractFailures();
+      }
+    } catch (error) {
+      // Keep durable failures visible until the server confirms deployment.
+      debugPrint(
+        '[SyncEngine] Contract recovery deferred: ${error.runtimeType}',
+      );
+    }
+  }
 
   Future<void> _processPendingMutations(String syncAccountId) async {
     final client = _client;
@@ -684,7 +716,13 @@ class SyncEngine with WidgetsBindingObserver {
             'p_sender_workspace': payload['p_sender_workspace'] ?? 'merchant',
           },
         );
-        return result?.toString();
+        if (result is! String ||
+            !RegExp(
+              r'^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$',
+            ).hasMatch(result)) {
+          throw StateError('لم يؤكد الخادم حفظ رد الاعتراض.');
+        }
+        return result;
 
       case 'add_business_customer':
       case 'pending_directory':
@@ -777,8 +815,34 @@ class SyncEngine with WidgetsBindingObserver {
         if (businessId == null || businessId.isEmpty) {
           throw StateError('missing_business_id');
         }
-        final values = Map<String, dynamic>.from(payload)..remove('businessId');
-        await client.from('businesses').update(values).eq('id', businessId);
+        // Old device queues include updated_at, which is server-owned and
+        // deliberately has no authenticated column UPDATE grant.
+        const editable = {
+          'name',
+          'business_type',
+          'country_code',
+          'city',
+          'address',
+          'contact_phone_display',
+          'timezone',
+        };
+        final values = <String, dynamic>{
+          for (final key in editable)
+            if (payload.containsKey(key)) key: payload[key],
+        };
+        if (values.isEmpty) throw StateError('empty_business_profile');
+        final updated = await client
+            .from('businesses')
+            .update(values)
+            .eq('id', businessId)
+            .select('id')
+            .maybeSingle();
+        if (updated?['id'] != businessId) {
+          throw const PostgrestException(
+            message: 'Business update not authorized or unavailable',
+            code: '42501',
+          );
+        }
         return businessId;
 
       default:

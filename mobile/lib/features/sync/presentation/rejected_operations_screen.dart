@@ -212,6 +212,8 @@ class _RejectedOperationCard extends StatelessWidget {
   }
 
   static String _label(String command) => switch (command) {
+    'add_dispute_message' => 'رد على اعتراض بانتظار الإرسال',
+    'update_business_profile' => 'تحديث بيانات المؤسسة',
     'mutate_customer_profile' => 'تعديل بيانات العميل أو أرشفته',
     'create_ledger_entry' => 'قيد مالي مرفوض',
     'apply_customer_discount' => 'خصم مرفوض',

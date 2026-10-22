@@ -478,8 +478,11 @@ class AppDatabase {
   }
 
   Future<void> _migrateToV12(Database db) async {
-    await db.execute(
-      'ALTER TABLE local_dispute_messages ADD COLUMN sender_workspace TEXT',
+    await _addColumnIfMissing(
+      db,
+      'local_dispute_messages',
+      'sender_workspace',
+      'sender_workspace TEXT',
     );
   }
 
@@ -1096,11 +1099,42 @@ class AppDatabase {
 
   Future<void> saveBusiness(Map<String, dynamic> business) async {
     final db = await database;
-    await db.insert(
-      'local_businesses',
-      business,
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.transaction((txn) async {
+      final pending = await txn.query(
+        'offline_mutations_queue',
+        columns: ['id'],
+        where: "local_ref_id=? AND command_type='update_business_profile'",
+        whereArgs: [business['id']],
+        limit: 1,
+      );
+      final row = Map<String, dynamic>.from(business);
+      if (pending.isNotEmpty) {
+        final saved = await txn.query(
+          'local_businesses',
+          where: 'id=?',
+          whereArgs: [business['id']],
+          limit: 1,
+        );
+        if (saved.isNotEmpty) {
+          for (final field in const [
+            'name',
+            'business_type',
+            'country_code',
+            'city',
+            'address',
+            'contact_phone',
+            'timezone',
+          ]) {
+            row[field] = saved.first[field];
+          }
+        }
+      }
+      await txn.insert(
+        'local_businesses',
+        row,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    });
     await rememberOwner();
   }
 
@@ -1972,6 +2006,52 @@ class AppDatabase {
     await db.update('offline_mutations_queue', {
       'status': 'pending',
     }, where: "status = 'syncing'");
+  }
+
+  /// Recover only the two confirmed deployment defects, once per request.
+  /// Request IDs and payloads stay unchanged; authorization failures from
+  /// business rules or other financial commands are never retried here.
+  Future<int> recoverDeploymentContractFailures() async {
+    final db = await database;
+    var recovered = 0;
+    await db.transaction((txn) async {
+      final rows = await txn.rawQuery('''
+        SELECT q.* FROM offline_mutations_queue q
+        WHERE q.status='dead_letter' AND (
+          (q.command_type='add_dispute_message' AND q.last_error_code='PGRST202') OR
+          (q.command_type='update_business_profile' AND q.last_error_code='42501'
+            AND q.last_error LIKE '%permission denied for table businesses%'))
+        AND NOT EXISTS (SELECT 1 FROM local_sync_state s
+          WHERE s.key='contract-repair-20261022:'||q.client_request_id)
+      ''');
+      for (final row in rows) {
+        final id = row['client_request_id'] as String;
+        await txn.update(
+          'offline_mutations_queue',
+          {
+            'status': 'pending',
+            'attempt_count': 0,
+            'last_error': null,
+            'last_error_code': null,
+            'next_retry_at': null,
+          },
+          where: 'client_request_id=?',
+          whereArgs: [id],
+        );
+        await txn.update(
+          'local_dispute_messages',
+          {'sync_status': 'pending'},
+          where: 'client_request_id=?',
+          whereArgs: [id],
+        );
+        await txn.insert('local_sync_state', {
+          'key': 'contract-repair-20261022:$id',
+          'value': '1',
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        recovered++;
+      }
+    });
+    return recovered;
   }
 
   Future<void> markMutationSyncing(String clientRequestId) async {
