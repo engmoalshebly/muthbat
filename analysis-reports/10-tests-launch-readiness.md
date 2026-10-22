@@ -1,5 +1,7 @@
 # تقرير تدقيق الاختبارات وجاهزية الإطلاق التجاري
 
+> **ملاحظة أرشفة (23 أكتوبر 2026):** هذا التقرير متقادم. المشروع تطور كثيرًا منذ كتابته: توجد الآن 21 ملف اختبار pgTAP (بما فيها اختبارات RLS سلبية واختبارات تعدد العملات)، و51 ملف اختبار Flutter، واختبارات وحدة وتكامل لدوال Edge، وCI فعلي على GitHub Actions يمر بنجاح. راجع [docs/launch-plan-v1-20261023.md](../docs/launch-plan-v1-20261023.md) للحالة الحالية وخطة الإطلاق. يُحتفظ بهذا التقرير لسياقه التاريخي فقط ولا يعبر عن الحالة الفعلية للمشروع.
+
 **الدور:** مدقق_الاختبارات_والجاهزية (Tests & Launch-Readiness Auditor)
 **النطاق:** `debt-ledger-supabase/supabase/tests/database/` (3 ملفات)، `supabase/seed.sql`، `supabase/config.toml`، `supabase/.env.example`، `debt-ledger-supabase/README.md`، `docs/First-version.md`، `mobile/test/`، `mobile/pubspec.yaml`، وفحص وجود CI وأدوات مراقبة في كامل المشروع.
 **قاعدة التصنيف:** [حرج] / [عالي] / [متوسط] / [منخفض] / [إيجابي]
