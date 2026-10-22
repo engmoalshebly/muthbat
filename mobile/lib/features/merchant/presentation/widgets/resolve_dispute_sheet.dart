@@ -22,11 +22,47 @@ class ResolveDisputeSheet extends ConsumerStatefulWidget {
 
 class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
   final _formKey = GlobalKey<FormState>();
-  String _selectedResolution =
-      'accepted'; // 'accepted', 'partially_accepted', 'rejected'
+  String? _selectedResolution;
   final _noteController = TextEditingController();
   final _correctedAmountController = TextEditingController();
   bool _isSubmitting = false;
+  bool _isReviewing = false;
+
+  String get _currency =>
+      widget.dispute.currencyCode ??
+      ref.read(merchantControllerProvider).currency;
+
+  Money? get _correctedMoney {
+    final text = _correctedAmountController.text
+        .replaceAllMapped(RegExp('[٠-٩۰-۹]'), (match) {
+          final code = match[0]!.codeUnitAt(0);
+          return String.fromCharCode(
+            48 + code - (code >= 0x06f0 ? 0x06f0 : 0x0660),
+          );
+        })
+        .replaceAll('٫', '.')
+        .replaceAll('٬', '');
+    return Money.tryParse(text);
+  }
+
+  String _amount(num value) =>
+      '${NumberFormat('#,##0.####').format(value)} $_currency';
+
+  String get _decisionLabel => switch (_selectedResolution) {
+    'partially_accepted' => 'قبول الاعتراض وتصحيح المبلغ',
+    'accepted' => 'قبول الاعتراض وإلغاء العملية',
+    _ => 'رفض الاعتراض والإبقاء على العملية',
+  };
+
+  String _outcome(double? corrected) => switch (_selectedResolution) {
+    'partially_accepted' =>
+      corrected == null
+          ? 'أدخل المبلغ الصحيح لعرض نتيجة التصحيح.'
+          : 'المبلغ بعد التصحيح: ${_amount(corrected)}',
+    'accepted' => 'سيُلغى أثر هذه العملية بالكامل على الرصيد.',
+    _ =>
+      'ستبقى العملية بمبلغ ${_amount(widget.dispute.entryAmount!)} دون تغيير.',
+  };
 
   @override
   void dispose() {
@@ -36,23 +72,67 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
   }
 
   void _handleResolve() async {
+    if (_isSubmitting || _isReviewing || _selectedResolution == null) return;
     if (!_formKey.currentState!.validate()) return;
-
-    setState(() => _isSubmitting = true);
-
-    double? correctedAmount;
-    if (_selectedResolution == 'partially_accepted') {
-      correctedAmount = Money.tryParse(
-        _correctedAmountController.text.trim(),
-      )?.toDouble();
+    final resolution = _selectedResolution!;
+    final correctedAmount = resolution == 'partially_accepted'
+        ? _correctedMoney!.toDouble()
+        : null;
+    final note = _noteController.text.trim();
+    setState(() => _isReviewing = true);
+    FocusScope.of(context).unfocus();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('مراجعة قرار الاعتراض'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(_decisionLabel),
+              const SizedBox(height: 12),
+              Text(
+                'مبلغ العملية الأصلي: ${_amount(widget.dispute.entryAmount!)}',
+              ),
+              const SizedBox(height: 8),
+              Text(_outcome(correctedAmount)),
+              const SizedBox(height: 12),
+              Text('سبب القرار: $note'),
+              const SizedBox(height: 12),
+              const Text(
+                'سيُرسل القرار للمزامنة. يتغير الرصيد بعد تأكيد الخادم، ويظل سجل العملية الأصلية محفوظًا.',
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('العودة للتعديل'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('تأكيد وحفظ القرار'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    setState(() {
+      _isReviewing = false;
+      _isSubmitting = confirmed == true;
+    });
+    if (confirmed != true) {
+      return;
     }
 
     final success = await ref
         .read(merchantControllerProvider.notifier)
         .resolveDispute(
           disputeId: widget.dispute.id,
-          resolution: _selectedResolution,
-          note: _noteController.text.trim(),
+          resolution: resolution,
+          note: note,
           correctedAmount: correctedAmount,
         );
 
@@ -86,8 +166,8 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final currencyFormatter = NumberFormat('#,##0.##');
     final origAmount = widget.dispute.entryAmount ?? 0.0;
+    final amountAvailable = origAmount.isFinite && origAmount > 0;
 
     return Container(
       padding: EdgeInsets.only(
@@ -121,23 +201,29 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
               const SizedBox(height: 16),
 
               Text(
-                'معالجة واتخاذ قرار بشأن الاعتراض',
+                'معالجة الاعتراض',
                 style: AppTypography.titleMedium(color: AppColors.textPrimary),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 4),
               Text(
-                'المبلغ المعترض عليه: ${currencyFormatter.format(origAmount)} ${widget.dispute.currencyCode ?? ref.read(merchantControllerProvider).currency}',
+                amountAvailable
+                    ? 'مبلغ العملية الأصلي: ${_amount(origAmount)}'
+                    : 'تعذر قراءة مبلغ العملية. حدّث بيانات الاعتراض قبل اتخاذ القرار.',
                 style: AppTypography.caption(color: AppColors.textSecondary),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 20),
+              const Text(
+                'اختر الإجراء المناسب. قبول الاعتراض لا يعني إلغاء العملية تلقائيًا.',
+              ),
+              const SizedBox(height: 12),
 
               // خيارات القرار الثلاثة
               RadioGroup<String>(
                 groupValue: _selectedResolution,
                 onChanged: (value) {
-                  if (value != null) {
+                  if (value != null && !_isSubmitting) {
                     setState(() => _selectedResolution = value);
                   }
                 },
@@ -145,25 +231,24 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
                   children: [
                     _buildResolutionOption(
                       value: 'accepted',
-                      title: 'قبول الاعتراض بالكامل',
-                      subtitle:
-                          'سيتم عكس القيد الأصلي بالكامل وإلغاؤه من الذمة.',
+                      title: 'قبول الاعتراض وإلغاء العملية',
+                      subtitle: 'إلغاء أثر العملية بالكامل مع الاحتفاظ بسجلها.',
                       icon: Icons.check_circle_outline_rounded,
                       color: AppColors.success,
                     ),
                     const SizedBox(height: 8),
                     _buildResolutionOption(
                       value: 'partially_accepted',
-                      title: 'قبول جزئي (تصحيح المبلغ)',
+                      title: 'قبول الاعتراض وتصحيح المبلغ',
                       subtitle:
-                          'عكس القيد وإعادة تسجيله بالمبلغ الصحيح المتفق عليه.',
+                          'إدخال المبلغ الصحيح للعملية بدل المبلغ المسجل.',
                       icon: Icons.published_with_changes_rounded,
                       color: AppColors.accentGoldDark,
                     ),
                     const SizedBox(height: 8),
                     _buildResolutionOption(
                       value: 'rejected',
-                      title: 'رفض الاعتراض',
+                      title: 'رفض الاعتراض والإبقاء على العملية',
                       subtitle: 'الإبقاء على القيد كما هو مسجل دون تعديل.',
                       icon: Icons.cancel_outlined,
                       color: AppColors.debtRed,
@@ -176,7 +261,10 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
               // حقل المبلغ المصحح (إذا اختار قبول جزئي)
               if (_selectedResolution == 'partially_accepted') ...[
                 TextFormField(
+                  key: const Key('dispute-corrected-amount'),
                   controller: _correctedAmountController,
+                  readOnly: _isSubmitting,
+                  onChanged: (_) => setState(() {}),
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
@@ -187,9 +275,9 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
                     color: AppColors.accentGoldDark,
                   ),
                   decoration: InputDecoration(
-                    labelText: 'المبلغ الصحيح المستحق *',
-                    hintText: '0.00',
-                    suffixText: ref.read(merchantControllerProvider).currency,
+                    labelText: 'المبلغ الصحيح للعملية *',
+                    hintText: 'أدخل المبلغ المتفق عليه',
+                    suffixText: _currency,
                     filled: true,
                     fillColor: AppColors.backgroundLight,
                     border: OutlineInputBorder(
@@ -203,7 +291,7 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
                     if (val == null || val.trim().isEmpty) {
                       return 'يرجى إدخال المبلغ المصحح';
                     }
-                    final parsed = Money.tryParse(val.trim())?.toDouble();
+                    final parsed = _correctedMoney?.toDouble();
                     if (parsed == null || parsed <= 0) {
                       return 'المبلغ يجب أن يكون أكبر من 0';
                     }
@@ -215,10 +303,24 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
                 ),
                 const SizedBox(height: 16),
               ],
+              if (_selectedResolution != null && amountAvailable) ...[
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.backgroundLight,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(_outcome(_correctedMoney?.toDouble())),
+                ),
+                const SizedBox(height: 16),
+              ],
 
               // حقل ملاحظة القرار
               TextFormField(
+                key: const Key('dispute-decision-note'),
                 controller: _noteController,
+                readOnly: _isSubmitting,
+                maxLength: 4000,
                 maxLines: 2,
                 decoration: InputDecoration(
                   labelText: 'ملاحظة القرار / سبب الإجراء *',
@@ -239,6 +341,7 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
                     return 'يرجى كتابة ملاحظة توضيحية للقرار';
                   }
                   if (val.trim().length < 3) return 'الملاحظة قصيرة جداً';
+                  if (val.trim().length > 4000) return 'الحد الأقصى 4000 حرف';
                   return null;
                 },
               ),
@@ -246,12 +349,15 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
 
               // زر التثبيت
               CustomButton(
-                text: 'تأكيد القرار وإنهاء الاعتراض',
+                key: const Key('dispute-review'),
+                text: 'مراجعة القرار',
                 isLoading: _isSubmitting,
                 variant: _selectedResolution == 'rejected'
                     ? ButtonVariant.primary
                     : ButtonVariant.secondary,
-                onPressed: _handleResolve,
+                onPressed: _selectedResolution == null || !amountAvailable
+                    ? null
+                    : _handleResolve,
                 icon: Icons.gavel_rounded,
               ),
             ],
@@ -271,7 +377,9 @@ class _ResolveDisputeSheetState extends ConsumerState<ResolveDisputeSheet> {
     final isSelected = _selectedResolution == value;
 
     return GestureDetector(
-      onTap: () => setState(() => _selectedResolution = value),
+      onTap: _isSubmitting
+          ? null
+          : () => setState(() => _selectedResolution = value),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.all(14),

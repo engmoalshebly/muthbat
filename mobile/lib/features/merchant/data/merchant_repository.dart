@@ -1079,7 +1079,7 @@ class MerchantRepository {
     double? correctedAmount,
   }) async {
     if (!{'accepted', 'partially_accepted', 'rejected'}.contains(resolution) ||
-        note.trim().isEmpty ||
+        note.trim().length < 3 ||
         note.trim().length > 4000) {
       throw const FormatException('حدد القرار واكتب سببًا واضحًا.');
     }
@@ -1107,6 +1107,7 @@ class MerchantRepository {
       if (resolution == 'partially_accepted' &&
           (amount == null ||
               correctedAmount == null ||
+              !correctedAmount.isFinite ||
               correctedAmount <= 0 ||
               correctedAmount >= amount)) {
         throw const FormatException(
@@ -1115,7 +1116,7 @@ class MerchantRepository {
       }
       if (resolution != 'partially_accepted' && correctedAmount != null) {
         throw const FormatException(
-          'التصحيح المالي متاح مع القبول الجزئي فقط.',
+          'إدخال مبلغ جديد متاح عند اختيار تصحيح المبلغ فقط.',
         );
       }
       final pending = await tx.query(

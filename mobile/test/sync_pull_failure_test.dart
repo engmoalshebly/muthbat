@@ -37,6 +37,7 @@ void main() {
   Map<String, dynamic>? sentMessage;
   var contractReady = true;
   var profileVisible = true;
+  var resolutionResultMissing = false;
   Completer<void>? pullEntered;
   Completer<void>? releasePull;
   Completer<void>? resolutionSent;
@@ -71,6 +72,7 @@ void main() {
     sentMessage = null;
     contractReady = true;
     profileVisible = true;
+    resolutionResultMissing = false;
     pullEntered = null;
     releasePull = null;
     resolutionSent = null;
@@ -289,7 +291,12 @@ void main() {
           if (resolutionSent != null && !resolutionSent!.isCompleted) {
             resolutionSent!.complete();
           }
-          return respond('f1900000-0000-0000-0000-000000000071');
+          return respond(
+            resolutionResultMissing ||
+                    resolutionRequest?['p_resolution'] == 'rejected'
+                ? null
+                : 'f1900000-0000-0000-0000-000000000071',
+          );
         }
         if (withDispute && table == 'disputes') {
           return respond([
@@ -598,6 +605,36 @@ void main() {
       expect(await engine.triggerSync(), isTrue);
       expect(resolutionRequest, isNull);
       expect(await db.getLocalDisputeMessages(disputeId), hasLength(1));
+    },
+  );
+
+  test(
+    'financial dispute decision remains durable without server confirmation',
+    () async {
+      resolutionResultMissing = true;
+      const requestId = 'f1900000-0000-0000-0000-000000000095';
+      final db = AppDatabase.instance;
+      addTearDown(() async {
+        await (await db.database).delete(
+          'offline_mutations_queue',
+          where: 'client_request_id=?',
+          whereArgs: [requestId],
+        );
+      });
+      await db.enqueueMutation(
+        commandType: 'resolve_dispute',
+        clientRequestId: requestId,
+        payload: {
+          'p_dispute_id': 'f1900000-0000-0000-0000-000000000070',
+          'p_resolution': 'partially_accepted',
+          'p_resolution_note': 'تصحيح المبلغ',
+          'p_corrected_amount': 80,
+          'p_client_request_id': requestId,
+        },
+      );
+      expect(await engine.triggerSync(), isFalse);
+      expect(await db.getMutationByClientRequestId(requestId), isNotNull);
+      expect(resolutionRequest?['p_client_request_id'], requestId);
     },
   );
 

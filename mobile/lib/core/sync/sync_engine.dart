@@ -704,6 +704,13 @@ class SyncEngine with WidgetsBindingObserver {
 
       case 'resolve_dispute':
         final result = await client.rpc('resolve_dispute', params: payload);
+        if (payload['p_resolution'] != 'rejected' &&
+            (result is! String ||
+                !RegExp(
+                  r'^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$',
+                ).hasMatch(result))) {
+          throw StateError('لم يؤكد الخادم حفظ التصحيح المالي للاعتراض.');
+        }
         return result as String?;
 
       case 'add_dispute_message':
