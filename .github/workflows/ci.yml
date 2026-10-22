@@ -335,11 +335,12 @@ jobs:
       - name: Throwaway keystore
         run: |
           keytool -genkeypair -v -keystore android/ci-throwaway.jks -storetype JKS             -alias ci -keyalg RSA -keysize 2048 -validity 2             -storepass ci-throwaway -keypass ci-throwaway -dname "CN=ci"
-          printf 'storeFile=ci-throwaway.jks
-keyAlias=ci
-keyPassword=ci-throwaway
-storePassword=ci-throwaway
-' > android/key.properties
+          {
+            echo storeFile=ci-throwaway.jks
+            echo keyAlias=ci
+            echo keyPassword=ci-throwaway
+            echo storePassword=ci-throwaway
+          } > android/key.properties
       - name: Build release APK with R8
         run: |
           dart tool/prepare_release_plugin_registrant.dart
