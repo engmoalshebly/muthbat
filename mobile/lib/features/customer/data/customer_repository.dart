@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'models/customer_summary_model.dart';
 import 'customer_outbox.dart';
@@ -162,6 +163,7 @@ class CustomerRepository {
   }) async {
     _requireOnlineSession();
     final owner = userId;
+    final elapsed = Stopwatch()..start();
     String? snapshotId;
     void checkAccount() {
       if (owner != userId) throw StateError('تغير الحساب أثناء تحميل البيانات');
@@ -240,7 +242,7 @@ class CustomerRepository {
             ? order
             : (b['id'] as String).compareTo(a['id'] as String);
       });
-      return CustomerReadSnapshot(
+      final snapshot = CustomerReadSnapshot(
         customerId: metadata['customer_id'] as String?,
         updatedAt: metadata['updated_at'] as String,
         summaries: summaries,
@@ -254,6 +256,17 @@ class CustomerRepository {
             .toList(),
         entries: entries,
       );
+      debugPrint(
+        '[CustomerRead] $scope completed: ${items.length} items in '
+        '${elapsed.elapsedMilliseconds}ms',
+      );
+      return snapshot;
+    } catch (error) {
+      debugPrint(
+        '[CustomerRead] $scope deferred after ${elapsed.elapsedMilliseconds}ms: '
+        '${error.runtimeType}',
+      );
+      rethrow;
     } finally {
       if (snapshotId != null && owner == userId) {
         // Cleanup is disposable and must not delay a completed financial read.
