@@ -295,6 +295,7 @@ jobs:
         env:
           RELEASE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           RELEASE_SUPABASE_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          RELEASE_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: |
           test -n "$RELEASE_SUPABASE_URL"
           test -n "$RELEASE_SUPABASE_KEY"
@@ -303,7 +304,9 @@ jobs:
             --dart-define="SUPABASE_URL=$RELEASE_SUPABASE_URL" \
             --dart-define="SUPABASE_ANON_KEY=$RELEASE_SUPABASE_KEY" \
             --dart-define=APP_ENV=prod \
-            --dart-define=PHONE_VERIFICATION_ENABLED=true
+            --dart-define=PHONE_VERIFICATION_ENABLED=true \
+            --dart-define=SENTRY_DSN="$RELEASE_SENTRY_DSN" \
+            --dart-define=APP_RELEASE="muthbat@${GITHUB_SHA::8}"
       - name: Upload signed AAB artifact
         uses: actions/upload-artifact@v4
         with:
