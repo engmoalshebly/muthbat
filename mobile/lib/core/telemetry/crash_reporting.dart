@@ -41,25 +41,25 @@ class CrashReporting {
     if (dropped.contains(crumb.category) || dropped.contains(crumb.type)) {
       return null;
     }
-    return crumb.copyWith(
-      message: crumb.message == null ? null : scrub(crumb.message!),
-      data: null,
-    );
+    final message = crumb.message;
+    if (message != null) crumb.message = scrub(message);
+    crumb.data = null;
+    return crumb;
   }
 
   static SentryEvent? _beforeSend(SentryEvent event, Hint hint) {
-    return event.copyWith(
-      user: null,
-      request: null,
-      serverName: null,
-      message: event.message == null
-          ? null
-          : SentryMessage(scrub(event.message!.formatted)),
-      exceptions: event.exceptions
-          ?.map(
-            (e) => e.copyWith(value: e.value == null ? null : scrub(e.value!)),
-          )
-          .toList(),
-    );
+    event
+      ..user = null
+      ..request = null
+      ..serverName = null;
+    final message = event.message;
+    if (message != null) {
+      event.message = SentryMessage(scrub(message.formatted));
+    }
+    for (final e in event.exceptions ?? const <SentryException>[]) {
+      final value = e.value;
+      if (value != null) e.value = scrub(value);
+    }
+    return event;
   }
 }
