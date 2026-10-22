@@ -26,6 +26,10 @@ void main() {
     addTearDown(() => WorkmanagerPlatform.instance = previous);
 
     await configureBackgroundSync();
+    // Let any pending platform-channel continuation finish before asserting;
+    // this is cheap and guards against slower/CI-loaded runners where the
+    // awaited call's completion can be scheduled a beat later.
+    await Future<void>.delayed(Duration.zero);
 
     expect(platform.cancelled, [backgroundSyncTask]);
   });

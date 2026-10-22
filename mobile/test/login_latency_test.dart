@@ -28,8 +28,13 @@ void main() {
     return '${enc({'alg': 'HS256', 'typ': 'JWT'})}.${enc({'sub': id, 'exp': DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600})}.test';
   }
 
+  // Pumps real wall-clock time so pending background futures (gated by the
+  // Completers below) get a chance to run. A fixed 250ms budget was enough
+  // locally but proved too tight under CI's slower/shared runners, where
+  // this file's async HTTP-mock plumbing can take longer to settle; poll
+  // for longer and in smaller steps so the common case still returns fast.
   Future<void> settleBackground() async {
-    for (var i = 0; i < 25; i++) {
+    for (var i = 0; i < 300; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
   }
