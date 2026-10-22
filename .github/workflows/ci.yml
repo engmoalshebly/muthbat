@@ -312,6 +312,40 @@ jobs:
           retention-days: 30
 
   # ---------------------------------------------------------------------------
+  # فحص بناء الإصدار (R8/ProGuard) على كل PR بمفتاح مؤقت لا يُستخدم للنشر.
+  # ---------------------------------------------------------------------------
+  android-release-smoke:
+    name: android-release-smoke (R8)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.38.9
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Throwaway keystore
+        run: |
+          keytool -genkeypair -v -keystore android/ci-throwaway.jks -storetype JKS             -alias ci -keyalg RSA -keysize 2048 -validity 2             -storepass ci-throwaway -keypass ci-throwaway -dname "CN=ci"
+          printf 'storeFile=ci-throwaway.jks
+keyAlias=ci
+keyPassword=ci-throwaway
+storePassword=ci-throwaway
+' > android/key.properties
+      - name: Build release APK with R8
+        run: |
+          dart tool/prepare_release_plugin_registrant.dart
+          flutter build apk --release --no-pub             --dart-define=SUPABASE_URL=https://ci.invalid             --dart-define=SUPABASE_ANON_KEY=ci             --dart-define=APP_ENV=prod             --dart-define=PHONE_VERIFICATION_ENABLED=true
+
+  # ---------------------------------------------------------------------------
   # المرحلة 6 — بوابة الدمج الموحدة
   # تُشترط في حماية فرع main كفحص واحد؛ تفشل إن فشلت أي مرحلة سابقة.
   # ---------------------------------------------------------------------------
@@ -326,6 +360,7 @@ jobs:
       - flutter
       - openwa
       - insurance-demo
+      - android-release-smoke
     runs-on: ubuntu-latest
     steps:
       - name: All required stages passed
