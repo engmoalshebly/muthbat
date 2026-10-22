@@ -49,6 +49,7 @@ jobs:
       - name: gitleaks scan (full history)
         uses: gitleaks/gitleaks-action@v2
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_COMMENTS: 'true'
           # .gitleaks.toml في جذر المستودع يُلتقط تلقائياً ويتضمن قاعدة owa_k1_
 
