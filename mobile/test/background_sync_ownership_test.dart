@@ -26,10 +26,15 @@ void main() {
     addTearDown(() => WorkmanagerPlatform.instance = previous);
 
     await configureBackgroundSync();
-    // Let any pending platform-channel continuation finish before asserting;
-    // this is cheap and guards against slower/CI-loaded runners where the
-    // awaited call's completion can be scheduled a beat later.
-    await Future<void>.delayed(Duration.zero);
+    // configureBackgroundSync() already awaits cancelByUniqueName, so this
+    // should be synchronous in effect; but on slower/loaded CI runners the
+    // mocked platform channel call has intermittently not yet recorded the
+    // cancellation by the time execution resumes here. Poll briefly with a
+    // real delay (a zero-delay microtask pump was not enough) instead of
+    // asserting immediately.
+    for (var i = 0; i < 50 && platform.cancelled.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
 
     expect(platform.cancelled, [backgroundSyncTask]);
   });
