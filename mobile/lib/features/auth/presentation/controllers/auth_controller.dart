@@ -1262,7 +1262,7 @@ class AuthController extends StateNotifier<AuthState> {
         try {
           await AppDatabase.instance.reopenAccount(owner);
           if (current()) {
-            return _refreshCloudBusinessAccess(
+            return await _refreshCloudBusinessAccess(
               owner: owner,
               retryAfterDatabaseRecovery: false,
             );

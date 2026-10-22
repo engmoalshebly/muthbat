@@ -58,3 +58,20 @@ OpenWA/qrcode.png
 OpenWA/.wwebjs_auth/
 OpenWA/.wwebjs_cache/
 muthbat/
+
+# Local artifacts that are not product source (screenshots, builds, handoffs)
+/mobile/*.png
+*.apk
+*.aab
+*.zip
+*.docx
+/releases/
+/.verification/
+/darai-client-handoff/
+
+# Local AI-agent tooling
+/.agents/
+/.claude/
+/.codestudio/
+/.commandcode/
+/skills-lock.json

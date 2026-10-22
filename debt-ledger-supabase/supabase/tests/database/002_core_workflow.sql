@@ -1,5 +1,5 @@
 begin;
-select plan(11);
+select plan(10);
 
 -- Fixed IDs make this test deterministic. The surrounding transaction is rolled back.
 insert into auth.users (
@@ -78,17 +78,12 @@ select is(
   4, 'Statement contains each ledger event in the selected period'
 );
 
--- An admin/owner controlled invitation grants a scoped operational role only after acceptance.
-select set_config('test.invite_id',public.invite_business_member(current_setting('test.business_id')::uuid,'83333333-3333-3333-3333-333333333333','cashier')::text,true);
-select set_config('request.jwt.claim.sub','83333333-3333-3333-3333-333333333333',true);
-select public.respond_business_member_invite(current_setting('test.invite_id')::uuid,true);
-select is(
-  (select status::text from public.business_member_invites where id=current_setting('test.invite_id')::uuid),
-  'accepted', 'Employee invitation has an auditable acceptance state'
-);
-select is(
-  (select role::text from public.business_members where business_id=current_setting('test.business_id')::uuid and user_id='83333333-3333-3333-3333-333333333333'),
-  'cashier', 'Accepted invitation creates an active scoped member role'
+-- Business teams are disabled for v1: invitations are not callable by API roles.
+select throws_ok(
+  format('select public.invite_business_member(%L::uuid,%L::uuid,%L)',current_setting('test.business_id'),'83333333-3333-3333-3333-333333333333','cashier'),
+  '42501',
+  null,
+  'Employee invitations are disabled for API roles in v1'
 );
 
 select * from finish();
